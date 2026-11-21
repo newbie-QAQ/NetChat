@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 
@@ -20,10 +21,25 @@ namespace NetChat
         private static Type mp3ReaderType;   // NAudio.Wave.Mp3FileReader
         private static Type waveFormatType;  // NAudio.Wave.WaveFormat
 
+        /// <summary>探测失败的具体原因(未装/加载失败/版本不对), 给面板显示用</summary>
+        private static string failReason;
+
         /// <summary>扩展包是否可用(Mods/NetChat/NAudio.dll 存在且能加载)</summary>
         public static bool Available
         {
             get { Probe(); return mp3ReaderType != null; }
+        }
+
+        /// <summary>面板右下角那行字: 已启用 / 未装(原因)</summary>
+        public static string StatusText
+        {
+            get
+            {
+                Probe();
+                return mp3ReaderType != null
+                    ? "点歌扩展: 已启用"
+                    : "点歌扩展: 未装" + (failReason == null ? "" : " (" + failReason + ")");
+            }
         }
 
         private static void Probe()
@@ -33,23 +49,85 @@ namespace NetChat
 
             try
             {
-                string dll = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Mods", "NetChat", "NAudio.dll");
-                if (!File.Exists(dll)) return;
+                string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Mods", "NetChat");
+                if (!Directory.Exists(dir)) { failReason = "找不到 " + dir; return; }
 
-                Assembly asm = Assembly.LoadFrom(dll);
-                Type reader = asm.GetType("NAudio.Wave.Mp3FileReader", false);
-                Type fmt = asm.GetType("NAudio.Wave.WaveFormat", false);
-
-                if (reader != null && fmt != null)
+                // 候选: 门面 NAudio.dll 优先, 然后目录里其它 NAudio*.dll(哪个有 Mp3FileReader 用哪个)
+                List<string> candidates = new List<string>();
+                string facade = Path.Combine(dir, "NAudio.dll");
+                if (File.Exists(facade)) candidates.Add(facade);
+                try
                 {
-                    mp3ReaderType = reader;
-                    waveFormatType = fmt;
+                    foreach (string f in Directory.GetFiles(dir, "NAudio*.dll"))
+                    {
+                        if (!candidates.Contains(f)) candidates.Add(f);
+                    }
+                }
+                catch { }
+
+                if (candidates.Count == 0) { failReason = "目录里没有 NAudio.dll"; return; }
+
+                Exception last = null;
+
+                foreach (string dll in candidates)
+                {
+                    Assembly asm;
+                    try { asm = Assembly.LoadFrom(dll); }
+                    catch (Exception e) { last = e; continue; }
+
+                    // Mp3FileReader 要具体类(公开构造), Base 是抽象基类不认
+                    Type reader = FindType(asm, "NAudio.Wave.Mp3FileReader");
+                    Type fmt = reader != null ? FindType(asm, "NAudio.Wave.WaveFormat") : null;
+
+                    if (reader != null && fmt != null)
+                    {
+                        mp3ReaderType = reader;
+                        waveFormatType = fmt;
+                        failReason = null;
+                        return;
+                    }
+                }
+
+                failReason = last != null
+                    ? "加载失败: " + (last.InnerException ?? last).Message
+                    : "类型缺失(版本不对?)";
+            }
+            catch (Exception e)
+            {
+                failReason = "加载失败: " + (e.InnerException ?? e).Message;
+            }
+        }
+
+        /// <summary>取类型: GetType 失败(转发目标加载不了)再用 GetTypes 兜底</summary>
+        private static Type FindType(Assembly asm, string fullName)
+        {
+            try
+            {
+                Type t = asm.GetType(fullName, false);
+                if (t != null) return t;
+            }
+            catch { }
+
+            try
+            {
+                foreach (Type t in asm.GetTypes())
+                {
+                    if (t != null && t.FullName == fullName) return t;
                 }
             }
-            catch
+            catch (ReflectionTypeLoadException e)
             {
-                mp3ReaderType = null;
+                if (e.Types != null)
+                {
+                    foreach (Type t in e.Types)
+                    {
+                        if (t != null && t.FullName == fullName) return t;
+                    }
+                }
             }
+            catch { }
+
+            return null;
         }
 
         /// <summary>

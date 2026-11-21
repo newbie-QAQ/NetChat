@@ -124,6 +124,16 @@ namespace NetChat
             hits.Clear();
         }
 
+        /// <summary>表情面板要打开时, 把点歌面板收起(两个面板都占右下角)</summary>
+        public void Close()
+        {
+            if (open)
+            {
+                open = false;
+                hits.Clear();
+            }
+        }
+
         public override bool ContainsPoint(Vector2 point)
         {
             if (!open) return false;
@@ -244,9 +254,9 @@ namespace NetChat
                     new Vector2(x, dim.Y + dim.Height - 24f), new Color(255, 210, 120), 0.75f);
             }
 
-            Utils.DrawBorderString(spriteBatch,
-                MediaExt.Available ? "点歌扩展: 已启用" : "点歌扩展: 未装(加群获取)",
-                new Vector2(dim.X + dim.Width - 108f, dim.Y + dim.Height - 24f),
+            string extStatus = MediaExt.StatusText;
+            Utils.DrawBorderString(spriteBatch, extStatus,
+                new Vector2(dim.X + dim.Width - ChatText.Width(extStatus) * 0.7f - 10f, dim.Y + dim.Height - 24f),
                 MediaExt.Available ? new Color(140, 230, 140) : Color.Gray, 0.7f);
 
             // 处理点击

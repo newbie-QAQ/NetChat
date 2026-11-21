@@ -734,7 +734,7 @@ namespace NetChat
             UIEmojiPicker picker = new UIEmojiPicker();
             UIMusicPanel musicPanel = new UIMusicPanel();
 
-            UIEmojiToggle toggle = new UIEmojiToggle(delegate { picker.Toggle(); musicPanel.Toggle(); });
+            UIEmojiToggle toggle = new UIEmojiToggle(delegate { picker.Toggle(); musicPanel.Close(); });
             UIMusicToggle musicToggle = new UIMusicToggle(delegate { musicPanel.Toggle(); picker.Close(); });
             UICameraToggle cameraToggle = new UICameraToggle(delegate { Screenshot.Request(); });
 

@@ -13,10 +13,14 @@ Terraria 1.4.5.8 + tPlainModLoader (TPML) 的隐秘聊天模组：不用服务�
 ## 安装
 
 1. 需要 [tPlainModLoader](https://github.com/)（TPML，原版模组启动器）
-2. 把发布包里的 `NetChat` 文件夹整个放进游戏目录的 `Mods/` 下
+2. 需要前置 **NetComm（双端通信）**——Release 安装包里已经带上（`frontMod/` 或 zip 里的 `NetComm` 文件夹），把 `NetChat` 和 `NetComm` 两个文件夹一起放进游戏目录的 `Mods/` 下
 3. 进游戏，聊天框左侧的开关图标亮起即生效
 
 详细玩法见 [使用说明.md](使用说明.md)。
+
+## 前置模组说明
+
+NetComm 原作者为 **444**，源码版权归原作者所有，本仓库仅在 [`frontMod/NetComm/`](frontMod/NetComm/) 分发其编译产物。本构建在其基础上增加了"每帧发送片数"调节（1~64），其余未动。
 
 ## 下载
 

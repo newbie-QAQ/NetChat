@@ -1,22 +1,34 @@
 using System;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
-using Microsoft.Xna.Framework.Graphics;
 using Terraria;
-using XnaColor = Microsoft.Xna.Framework.Color;
 
 namespace NetChat
 {
     /// <summary>
-    /// 游戏截图直发: 把后备缓冲(玩家眼前这一帧)抓下来, 按图片设置缩放编码,
+    /// 游戏截图直发: 抓游戏窗口客户区, 按图片设置缩放编码,
     /// 直接进图片发送队列 —— 对接收方来说就是一张普通图片。
     ///
-    /// 抓屏必须等一帧完整画完之后做, 所以点击只挂个标记,
-    /// 等下一帧的 Update(上一帧刚 Present 完)再真正抓, 避开渲染中途读缓冲。
+    /// 用 GDI CopyFromScreen 而不是 GetBackBufferData:
+    /// Terraria 默认跑在 XNA 的 Reach 图形档, Reach 不支持读后备缓冲。
+    /// 抓屏等下一帧的 Update 做(上一帧刚 Present 完), 时序和原来一样。
     /// </summary>
     internal static class Screenshot
     {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT { public int Left, Top, Right, Bottom; }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct POINT { public int X, Y; }
+
+        [DllImport("user32.dll")]
+        private static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
+
+        [DllImport("user32.dll")]
+        private static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
+
         private static bool pending;
 
         /// <summary>点按钮时调, 只是挂个标记</summary>
@@ -37,38 +49,26 @@ namespace NetChat
         {
             try
             {
-                GraphicsDevice gd = Main.instance == null ? null : Main.instance.GraphicsDevice;
-                if (gd == null) return;
+                IntPtr hwnd = Process.GetCurrentProcess().MainWindowHandle;
+                if (hwnd == IntPtr.Zero) { Fail("找不到游戏窗口"); return; }
 
-                int w = gd.PresentationParameters.BackBufferWidth;
-                int h = gd.PresentationParameters.BackBufferHeight;
-                if (w <= 0 || h <= 0) { Fail("后备缓冲尺寸异常"); return; }
+                RECT r;
+                if (!GetClientRect(hwnd, out r)) { Fail("取窗口尺寸失败"); return; }
+
+                int w = r.Right - r.Left;
+                int h = r.Bottom - r.Top;
+                if (w <= 0 || h <= 0) { Fail("窗口客户区尺寸异常"); return; }
                 if (w > 4096 || h > 4096) { Fail("窗口分辨率太大 " + w + "x" + h); return; }
 
-                XnaColor[] pixels = new XnaColor[w * h];
-                gd.GetBackBufferData(pixels);
+                POINT tl = new POINT { X = 0, Y = 0 };
+                if (!ClientToScreen(hwnd, ref tl)) { Fail("窗口坐标转换失败"); return; }
 
-                // XNA 颜色灌进 GDI 位图(BGRA 字节序)
-                byte[] raw = new byte[pixels.Length * 4];
-                for (int i = 0; i < pixels.Length; i++)
-                {
-                    int o = i * 4;
-                    raw[o] = pixels[i].B;
-                    raw[o + 1] = pixels[i].G;
-                    raw[o + 2] = pixels[i].R;
-                    raw[o + 3] = pixels[i].A;
-                }
-
+                // 屏幕上这一块现在显示的就是刚 Present 完的那一帧
                 using (Bitmap bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb))
                 {
-                    BitmapData bd = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
-                    try
+                    using (Graphics g = Graphics.FromImage(bmp))
                     {
-                        Marshal.Copy(raw, 0, bd.Scan0, raw.Length);
-                    }
-                    finally
-                    {
-                        bmp.UnlockBits(bd);
+                        g.CopyFromScreen(tl.X, tl.Y, 0, 0, new Size(w, h));
                     }
 
                     byte[] data;

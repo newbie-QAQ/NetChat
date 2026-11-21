@@ -26,7 +26,7 @@ namespace NetChat
     internal static class UpdateChannel
     {
         /// <summary>本构建的版本号, 发版时手动改</summary>
-        public const string Version = "1.2";
+        public const string Version = "1.2.1";
 
         /// <summary>作者的游戏名, 提醒文案里用</summary>
         public const string AuthorName = "新手QAQ";

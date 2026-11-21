@@ -55,6 +55,7 @@ namespace NetChat
             Presence.OnEnterWorld();
             SignalLink.Reset();
             UpdateChannel.Reset();
+            SongChannel.Reset();
             Avatar.RequestBroadcast();
         }
 
@@ -75,6 +76,9 @@ namespace NetChat
             Presence.Update();
             SignalLink.Update();
             UpdateChannel.Poll();
+            Screenshot.Update();
+            SongChannel.Update();
+            SongPlayer.Update();
         }
 
         /// <summary>设置页的输入框在 Update 阶段吃按键, 和框架其它窗口一样</summary>
@@ -122,6 +126,19 @@ namespace NetChat
             if (msg.StartsWith(ImageProtocol.Magic + "|"))
             {
                 ImageTransfer.OnMessage(msg);
+                return;
+            }
+
+            // 点歌: 邀请/回执 和 音频分片
+            if (msg.StartsWith(SongChannel.OfferMagic + "|"))
+            {
+                SongChannel.OnMessage(msg, sender);
+                return;
+            }
+
+            if (msg.StartsWith(SongChannel.SliceMagic + "|"))
+            {
+                SongChannel.OnSliceMessage(msg);
                 return;
             }
 

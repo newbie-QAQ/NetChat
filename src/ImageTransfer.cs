@@ -95,6 +95,13 @@ namespace NetChat
                 return false;
             }
 
+            // 点歌和图片共用 NetComm 的待发队列, 同时发会把两边的进度条都搅乱
+            if (SongChannel.IsSending)
+            {
+                LastError = "歌曲还在发送, 等它传完再发图";
+                return false;
+            }
+
             return true;
         }
 
@@ -122,6 +129,13 @@ namespace NetChat
 
             string info = Format(data == null ? 0 : data.Length) + " 方形头像";
             return SendPrepared(data, ImageProtocol.AvatarName(userName), info, true);
+        }
+
+        /// <summary>截图直发: 编码好的图片字节直接进发送队列, 不经过文件读取</summary>
+        public static bool BeginSendRaw(byte[] data, string name, string info)
+        {
+            if (!CanSend()) return false;
+            return SendPrepared(data, name, info, false);
         }
 
         /// <summary>编码好的图片字节 -> 分片 -> 排进 NetComm 队列; 图片和头像共用这一条</summary>
@@ -593,7 +607,7 @@ namespace NetChat
             return (bytes / 1024f / 1024f).ToString("0.00") + " MB";
         }
 
-        private static string NextMsgId()
+        internal static string NextMsgId()
         {
             msgCounter = (msgCounter + 1) & 0xFFFF;
             return Environment.TickCount.ToString("X4") + msgCounter.ToString("X4");

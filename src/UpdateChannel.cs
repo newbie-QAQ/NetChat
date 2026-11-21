@@ -26,7 +26,7 @@ namespace NetChat
     internal static class UpdateChannel
     {
         /// <summary>本构建的版本号, 发版时手动改</summary>
-        public const string Version = "1.1";
+        public const string Version = "1.2";
 
         /// <summary>作者的游戏名, 提醒文案里用</summary>
         public const string AuthorName = "新手QAQ";
@@ -34,8 +34,8 @@ namespace NetChat
         /// <summary>提醒文案里的 QQ 群号</summary>
         public const string QQGroup = "1137052535";
 
-        /// <summary>提醒文案里的 GitHub 仓库地址, 仓库建好后填进来重新编译</summary>
-        public const string GithubUrl = "";
+        /// <summary>提醒文案里的 GitHub 仓库地址</summary>
+        public const string GithubUrl = "https://github.com/newbie-QAQ/NetChat/releases";
 
         /// <summary>给真老版本(收不到自动推送)的私聊提醒文案</summary>
         public static string OldVersionHint

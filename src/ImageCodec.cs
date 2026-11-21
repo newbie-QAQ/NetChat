@@ -31,47 +31,10 @@ namespace NetChat
             {
                 using (Image src = Image.FromFile(path))
                 {
-                    bool alpha = Image.IsAlphaPixelFormat(src.PixelFormat);
-                    int w = src.Width;
-                    int h = src.Height;
-                    if (w <= 0 || h <= 0) { error = "尺寸非法"; return false; }
+                    string fileName = ImageProtocol.SanitizeName(Path.GetFileNameWithoutExtension(path))
+                        + (Image.IsAlphaPixelFormat(src.PixelFormat) ? ".png" : ".jpg");
 
-                    int nw = w;
-                    int nh = h;
-
-                    if (maxSide > 0 && (w > maxSide || h > maxSide))
-                    {
-                        double k = Math.Min((double)maxSide / w, (double)maxSide / h);
-                        nw = Math.Max(1, (int)Math.Round(w * k));
-                        nh = Math.Max(1, (int)Math.Round(h * k));
-                    }
-
-                    using (Bitmap bmp = new Bitmap(nw, nh, PixelFormat.Format32bppArgb))
-                    {
-                        using (Graphics g = Graphics.FromImage(bmp))
-                        {
-                            g.CompositingMode = CompositingMode.SourceOver;
-                            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                            g.SmoothingMode = SmoothingMode.HighQuality;
-                            g.DrawImage(src, new Rectangle(0, 0, nw, nh));
-                        }
-
-                        using (MemoryStream ms = new MemoryStream())
-                        {
-                            if (alpha) bmp.Save(ms, ImageFormat.Png);
-                            else SaveJpeg(bmp, ms, quality);
-                            data = ms.ToArray();
-                        }
-                    }
-
-                    name = ImageProtocol.SanitizeName(Path.GetFileNameWithoutExtension(path)) + (alpha ? ".png" : ".jpg");
-                    info = w + "x" + h;
-                    if (nw != w || nh != h) info += " -> " + nw + "x" + nh;
-                    info += alpha ? " PNG" : " JPG q" + quality;
-
-                    if (data.Length == 0) { error = "重编码后为空"; return false; }
-                    return true;
+                    return PrepareScaled(src, maxSide, quality, fileName, out data, out info, out error);
                 }
             }
             catch (Exception e)
@@ -79,6 +42,61 @@ namespace NetChat
                 error = e.Message;
                 return false;
             }
+        }
+
+        /// <summary>截图用: 位图已经在了, 走同样的缩放+编码管线; name 是完整文件名</summary>
+        public static bool TryPrepareBitmap(Bitmap src, int maxSide, int quality, string name, out byte[] data, out string info, out string error)
+        {
+            return PrepareScaled(src, maxSide, quality, name, out data, out info, out error);
+        }
+
+        /// <summary>缩放+重编码的公共实现。PNG 还是 JPEG 由源图有没有透明通道决定</summary>
+        private static bool PrepareScaled(Image src, int maxSide, int quality, string name, out byte[] data, out string info, out string error)
+        {
+            data = null;
+            info = null;
+            error = null;
+
+            bool alpha = Image.IsAlphaPixelFormat(src.PixelFormat);
+            int w = src.Width;
+            int h = src.Height;
+            if (w <= 0 || h <= 0) { error = "尺寸非法"; return false; }
+
+            int nw = w;
+            int nh = h;
+
+            if (maxSide > 0 && (w > maxSide || h > maxSide))
+            {
+                double k = Math.Min((double)maxSide / w, (double)maxSide / h);
+                nw = Math.Max(1, (int)Math.Round(w * k));
+                nh = Math.Max(1, (int)Math.Round(h * k));
+            }
+
+            using (Bitmap bmp = new Bitmap(nw, nh, PixelFormat.Format32bppArgb))
+            {
+                using (Graphics g = Graphics.FromImage(bmp))
+                {
+                    g.CompositingMode = CompositingMode.SourceOver;
+                    g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+                    g.SmoothingMode = SmoothingMode.HighQuality;
+                    g.DrawImage(src, new Rectangle(0, 0, nw, nh));
+                }
+
+                using (MemoryStream ms = new MemoryStream())
+                {
+                    if (alpha) bmp.Save(ms, ImageFormat.Png);
+                    else SaveJpeg(bmp, ms, quality);
+                    data = ms.ToArray();
+                }
+            }
+
+            info = w + "x" + h;
+            if (nw != w || nh != h) info += " -> " + nw + "x" + nh;
+            info += alpha ? " PNG" : " JPG q" + quality;
+
+            if (data.Length == 0) { error = "重编码后为空"; return false; }
+            return true;
         }
 
         /// <summary>

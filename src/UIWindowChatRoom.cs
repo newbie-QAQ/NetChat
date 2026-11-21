@@ -324,7 +324,7 @@ namespace NetChat
             Utils.DrawBorderString(spriteBatch, tip, new Vector2(dim.X + 8f, viewTop + viewHeight + 2f), Color.Gray, 0.7f);
         }
 
-        /// <summary>悬停高亮 + 右键复制正文(系统提示和表情没有正文, 不响应)</summary>
+        /// <summary>悬停高亮 + 复制正文: 悬停时右端出现"复制"按钮, 左键或右键都能复制</summary>
         private void HandleCopy(SpriteBatch spriteBatch, CalculatedStyle dim)
         {
             if (hitNotes.Count == 0) return;
@@ -351,19 +351,27 @@ namespace NetChat
                 {
                     Main.LocalPlayer.mouseInterface = true;
 
-                    if (Main.mouseRight && Main.mouseRightRelease)
+                    Rectangle btn = new Rectangle(hitRects[hover].Right - 38, hitRects[hover].Y + 1, 36, 14);
+                    bool hoverBtn = btn.Contains(Main.mouseX, Main.mouseY);
+
+                    spriteBatch.Draw(TextureAssets.MagicPixel.Value, btn,
+                        hoverBtn ? new Color(90, 110, 170) * 0.85f : new Color(60, 70, 110) * 0.7f);
+                    Utils.DrawBorderString(spriteBatch, "复制", new Vector2(btn.X + 8f, btn.Y + 0.5f), Color.White, 0.75f);
+
+                    bool click = (Main.mouseLeft && Main.mouseLeftRelease && hoverBtn)
+                              || (Main.mouseRight && Main.mouseRightRelease && !hoverBtn);
+
+                    if (click)
                     {
-                        try
+                        if (Clip.SetText(note.Text))
                         {
-                            System.Windows.Forms.Clipboard.SetText(note.Text);
                             copiedNote = note;
                             copiedAt = DateTime.Now;
                             SoundEngine.PlaySound(12);
                         }
-                        catch { }
                     }
 
-                    string tipText = showCopied ? "已复制" : "右键复制";
+                    string tipText = showCopied ? "已复制" : "点击复制";
                     Main.instance.MouseText(tipText, 0, 0);
                 }
             }
@@ -606,6 +614,12 @@ namespace NetChat
             open = !open;
         }
 
+        /// <summary>点歌面板要打开时, 把表情面板收起(两个面板都占右下角)</summary>
+        public void Close()
+        {
+            open = false;
+        }
+
         /// <summary>收起时把整个面板从命中测试里摘掉, 免得挡住下面的聊天记录</summary>
         public override bool ContainsPoint(Vector2 point)
         {
@@ -718,13 +732,20 @@ namespace NetChat
             log.Top.Pixels = 2f;
 
             UIEmojiPicker picker = new UIEmojiPicker();
-            UIEmojiToggle toggle = new UIEmojiToggle(delegate { picker.Toggle(); });
+            UIMusicPanel musicPanel = new UIMusicPanel();
+
+            UIEmojiToggle toggle = new UIEmojiToggle(delegate { picker.Toggle(); musicPanel.Toggle(); });
+            UIMusicToggle musicToggle = new UIMusicToggle(delegate { musicPanel.Toggle(); picker.Close(); });
+            UICameraToggle cameraToggle = new UICameraToggle(delegate { Screenshot.Request(); });
 
             Child.Append(peers);
             Child.Append(log);
             Child.Append(new UIChatFooter());
             Child.Append(toggle);
             Child.Append(picker);
+            Child.Append(musicToggle);
+            Child.Append(musicPanel);
+            Child.Append(cameraToggle);
 
             OnOpen += ChatRoom.MarkRead;
         }

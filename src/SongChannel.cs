@@ -321,8 +321,8 @@ namespace NetChat
             Receiving = job;
             RecvStatus = "接收中 0%  " + job.Name;
 
-            try { NetCommBridge.Send(Channel, Encoding.UTF8.GetBytes(OkMagic + "|" + msgId)); }
-            catch { }
+            bool okSent = NetCommBridge.Send(Channel, Encoding.UTF8.GetBytes(OkMagic + "|" + msgId));
+            if (!okSent) ChatRoom.AddSystem("接受回执没发出去: " + (NetCommBridge.LastError ?? "NetComm 拒绝"));
         }
 
         public static void Decline(string msgId)

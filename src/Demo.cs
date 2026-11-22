@@ -129,8 +129,11 @@ namespace NetChat
                 return;
             }
 
-            // 点歌: 邀请/回执 和 音频分片
-            if (msg.StartsWith(SongChannel.OfferMagic + "|"))
+            // 点歌: 邀请(SRQ)/回执(SRQOK 接受, SRQNO 拒绝) 和 音频分片
+            // 注意回执不是 "SRQ|" 开头, 之前只路由 SRQ 导致发送端永远等不到确认
+            if (msg.StartsWith(SongChannel.OfferMagic + "|")
+                || msg.StartsWith(SongChannel.OkMagic + "|")
+                || msg.StartsWith(SongChannel.NoMagic + "|"))
             {
                 SongChannel.OnMessage(msg, sender);
                 return;

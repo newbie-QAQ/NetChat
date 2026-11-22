@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Terraria;
 
 namespace NetChat
@@ -64,6 +65,20 @@ namespace NetChat
         public static int SentHello;
         public static int ReceivedHello;
 
+        /// <summary>版本诊断日志: 排查"误报老版本玩家"用, 每次连接追加, 超 128KB 重建</summary>
+        public static void VerLog(string msg)
+        {
+            try
+            {
+                string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory,
+                    "Mods", "NetChat", "version_log.txt");
+
+                if (File.Exists(path) && new FileInfo(path).Length > 128 * 1024) File.Delete(path);
+                File.AppendAllText(path, "[" + DateTime.Now.ToString("HH:mm:ss") + "] " + msg + Environment.NewLine);
+            }
+            catch { }
+        }
+
         private static int heartbeatFrames = HeartbeatFrames;
         private static int sinceHello = HeartbeatFrames;
         private static int scanFrames;
@@ -90,6 +105,7 @@ namespace NetChat
             inWorld = true;
             LastError = "";
             Status = "准备发 HERE...";
+            VerLog("进世界 mySlot=" + Main.myPlayer);
         }
 
         public static void OnLeaveWorld()
@@ -143,6 +159,7 @@ namespace NetChat
             if (!ProjectileSign.SendHello(Main.myPlayer))
             {
                 LastError = "HERE 没发出去: " + ProjectileSign.LastError;
+                VerLog("HERE 发送失败 mySlot=" + Main.myPlayer + ": " + ProjectileSign.LastError);
                 return false;
             }
 
@@ -150,6 +167,7 @@ namespace NetChat
             SentHello++;
             sinceHello = 0;
             Status = "已打招呼, 在线 " + Peers.Count + " 人";
+            VerLog("发 HERE+NV mySlot=" + Main.myPlayer);
 
             // 顺带报一下版本号, 给作者端的更新分发和"房间里有新版本"提醒用
             SignalLink.Send(SignalLink.KindVer, "NV|" + Main.myPlayer + "|" + UpdateChannel.Version);
@@ -168,6 +186,7 @@ namespace NetChat
 
             peer.NetVersion = ver ?? "";
             peer.LastSeen = DateTime.Now;
+            VerLog("收到 NV slot=" + slot + " ver=" + peer.NetVersion);
         }
 
         /// <summary>收到一条聊天信令 HERE, slot = 发送者的玩家槽位</summary>
@@ -203,6 +222,7 @@ namespace NetChat
 
             ReceivedHello++;
             Status = "在线 " + Peers.Count + " 人";
+            VerLog("收到 HERE slot=" + slot);
         }
 
         /// <summary>按会话 id 找人, 没有返回 null</summary>

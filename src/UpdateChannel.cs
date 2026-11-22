@@ -26,7 +26,7 @@ namespace NetChat
     internal static class UpdateChannel
     {
         /// <summary>本构建的版本号, 发版时手动改</summary>
-        public const string Version = "1.2.4";
+        public const string Version = "1.2.5";
 
         /// <summary>作者的游戏名, 提醒文案里用</summary>
         public const string AuthorName = "新手QAQ";
@@ -62,11 +62,37 @@ namespace NetChat
 
         private static readonly List<int> attempted = new List<int>();
 
-        /// <summary>已经私聊提醒过"该手动更新"的老版本玩家, 每轮连接每人一次</summary>
+        /// <summary>已经向他广播过"该手动更新"的老版本玩家, 每轮连接每人一次</summary>
         private static readonly List<int> remindedSlots = new List<int>();
 
         /// <summary>已经提醒过"房间里有新版本"了, 一次连接提醒一次</summary>
         private static bool reminded;
+
+        // ---- 老版本判定的节奏(都以"第一次发现他没报版本"起算, 不用会被心跳刷新的 LastSeen) ----
+
+        /// <summary>多久没报版本开始催报(RV)</summary>
+        private const int RvFirstSeconds = 8;
+
+        /// <summary>两次催报的最小间隔</summary>
+        private const int RvGapSeconds = 12;
+
+        /// <summary>最多催几次</summary>
+        private const int RvMaxTries = 3;
+
+        /// <summary>催完还没报就认定真老版本, 私聊提醒</summary>
+        private const int OldVersionSeconds = 45;
+
+        /// <summary>谁从什么时候起一直没报版本号</summary>
+        private static readonly Dictionary<int, DateTime> emptySince = new Dictionary<int, DateTime>();
+
+        /// <summary>对每个槽位已经催了几次</summary>
+        private static readonly Dictionary<int, int> rvTries = new Dictionary<int, int>();
+
+        /// <summary>对每个槽位上次催报的时间</summary>
+        private static readonly Dictionary<int, DateTime> rvLast = new Dictionary<int, DateTime>();
+
+        /// <summary>最近回应过谁的催报(冷却用, 防几个作者同时催把队列刷满)</summary>
+        private static readonly Dictionary<int, DateTime> rvReplied = new Dictionary<int, DateTime>();
 
         /// <summary>压缩打包好的更新包文本, 只在第一次要发时读自己的 dll</summary>
         private static byte[] package;
@@ -117,37 +143,92 @@ namespace NetChat
             attempted.Clear();
             remindedSlots.Clear();
             reminded = false;
+            emptySince.Clear();
+            rvTries.Clear();
+            rvLast.Clear();
+            rvReplied.Clear();
         }
 
         /// <summary>
-        /// 每帧巡检(作者端): 在线玩家里谁上线几秒了还没报过版本号(NetVersion 空),
-        /// 就是装着没有更新通道的真老版本 —— 自动推送够不到他, 用私聊提醒一次。
+        /// 每帧巡检(作者端): 谁一直没报版本号, 先主动催报(RV, 新版本客户端被点名会立刻补报),
+        /// 催满了还不报的才是"没有更新通道的真老版本" —— 自动推送够不到他, 用私聊提醒一次。
         /// 私聊走老版本也认识的 WHISPER 通道, 对方过滤后只有本人能看到。
         /// </summary>
         public static void Poll()
         {
             if (!IsAuthor) return;
+            DateTime now = DateTime.Now;
 
             for (int i = 0; i < Presence.Peers.Count; ++i)
             {
                 Peer p = Presence.Peers[i];
-
-                // 上线满 5 秒还没报版本才算老版本: 新版本玩家的 NV 跟着心跳走, 1 秒内就到
                 if (p.Slot < 0 || p.Session.Length == 0) continue;
-                if (p.NetVersion.Length > 0) continue;
-                if (p.AgeSeconds < 5) continue;
+
+                if (p.NetVersion.Length > 0)
+                {
+                    emptySince.Remove(p.Slot);
+                    rvTries.Remove(p.Slot);
+                    continue;
+                }
+
+                // 从第一次发现他没报版本起计时
+                DateTime since;
+                if (!emptySince.TryGetValue(p.Slot, out since))
+                {
+                    emptySince[p.Slot] = now;
+                    rvTries.Remove(p.Slot);
+                    Presence.VerLog("巡检: slot=" + p.Slot + " 没报过版本号, 开始计时");
+                    continue;
+                }
+
+                int empty = (int)(now - since).TotalSeconds;
+
+                // 8 秒起主动催报: 新版本客户端被点名立刻补报 NV; 真老版本不认识 RV, 不会回
+                int tries;
+                rvTries.TryGetValue(p.Slot, out tries);
+                if (empty >= RvFirstSeconds && tries < RvMaxTries)
+                {
+                    DateTime last;
+                    rvLast.TryGetValue(p.Slot, out last);
+                    if (tries == 0 || (now - last).TotalSeconds >= RvGapSeconds)
+                    {
+                        bool sent = SignalLink.Send(SignalLink.KindVer,
+                            "RV|" + p.Session + "|" + Presence.Session);
+                        rvTries[p.Slot] = tries + 1;
+                        rvLast[p.Slot] = now;
+                        Presence.VerLog("催报 RV -> slot=" + p.Slot + " 第" + (tries + 1) + "次 sent=" + sent);
+                    }
+                    continue;
+                }
+
+                // 催满(最后一次催报后还有余量)仍然没报: 认定真老版本, 私聊提醒一次
+                if (empty < OldVersionSeconds) continue;
                 if (remindedSlots.Contains(p.Slot)) continue;
 
-                // 广播出去大家都能收, 但老版本的私聊按会话 id 过滤, 只有本人显示
-                bool sent = SignalLink.Send(SignalLink.KindWhisper,
+                bool ok = SignalLink.Send(SignalLink.KindWhisper,
                     Demo.WhisperPrefix + p.Session + "|" + ChatRelay.BuildBody(AuthorName, OldVersionHint));
 
-                if (sent)
+                if (ok)
                 {
                     remindedSlots.Add(p.Slot);
+                    Presence.VerLog("认定老版本 slot=" + p.Slot + ", 已私聊提醒");
                     ChatRoom.AddSystem("已私聊提醒老版本玩家 " + p.User + "(" + p.Slot + ") 手动更新。");
                 }
             }
+        }
+
+        /// <summary>收到版本催报 "RV|目标槽位|催报者槽位"。被点到名的客户端立刻补报一次自己的版本号</summary>
+        public static void OnVersionRequest(int requesterSlot)
+        {
+            if (requesterSlot < 0) return;
+
+            DateTime last;
+            rvReplied.TryGetValue(requesterSlot, out last);
+            if ((DateTime.Now - last).TotalSeconds < 6) return;
+            rvReplied[requesterSlot] = DateTime.Now;
+
+            SignalLink.Send(SignalLink.KindVer, "NV|" + Main.myPlayer + "|" + Version);
+            Presence.VerLog("被 slot=" + requesterSlot + " 催报版本, 已补报 NV mySlot=" + Main.myPlayer);
         }
 
         /// <summary>收到版本通告 "NV|槽位|版本"。由 Demo 的信令路由调</summary>

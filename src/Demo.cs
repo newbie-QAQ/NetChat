@@ -204,7 +204,7 @@ namespace NetChat
         {
             if (kind == SignalLink.KindVer)
             {
-                // "NV|槽位|版本号"
+                // "NV|槽位|版本号" 或催报 "RV|目标槽位|催报者槽位"
                 if (body.StartsWith("NV|", StringComparison.Ordinal))
                 {
                     string rest = body.Substring(3);
@@ -215,6 +215,22 @@ namespace NetChat
                         if (int.TryParse(rest.Substring(0, bar), out verSlot))
                         {
                             UpdateChannel.OnVersion(verSlot, rest.Substring(bar + 1));
+                        }
+                    }
+                }
+                else if (body.StartsWith("RV|", StringComparison.Ordinal))
+                {
+                    // 被点到名的客户端立刻补报自己的版本号; 真老版本不认识 RV, 自然不回
+                    string rest = body.Substring(3);
+                    int bar = rest.IndexOf('|');
+                    if (bar > 0)
+                    {
+                        int target, requester;
+                        if (int.TryParse(rest.Substring(0, bar), out target)
+                            && int.TryParse(rest.Substring(bar + 1), out requester)
+                            && target.ToString() == Presence.Session)
+                        {
+                            UpdateChannel.OnVersionRequest(requester);
                         }
                     }
                 }

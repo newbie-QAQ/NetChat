@@ -22,6 +22,11 @@ namespace NetChat
         private static Type mp3ReaderType;   // NAudio.Wave.Mp3FileReader
         private static Type waveFormatType;  // NAudio.Wave.WaveFormat
 
+        /// <summary>按文件名缓存已字节加载的程序集: 同一文件永远返回同一实例。
+        /// 探测时拿到的 Core 和 JIT 绑定时拿到的必须是同一份, 不然两份字节加载实例
+        /// 的反射类型互不兼容(同名不同程序集实例), GetValue 会直接抛参数异常</summary>
+        private static readonly Dictionary<string, Assembly> byteLoaded = new Dictionary<string, Assembly>();
+
         /// <summary>探测失败的具体原因(未装/加载失败/版本不对), 给面板显示用</summary>
         private static string failReason;
 
@@ -45,7 +50,7 @@ namespace NetChat
 
         /// <summary>
         /// NAudio 程序集解析器: 默认绑定找不到的 NAudio.* 都从模组目录按字节加载。
-        /// 常驻不摘(只在成功后有用: 之后 JIT Mp3FileReader 方法体时还需要它来补依赖)。
+        /// 常驻不摘(之后 JIT Mp3FileReader 方法体时还需要它来补依赖)。
         /// 用字节加载是为了绕开"同身份程序集已加载就返回旧实例"的坑——
         /// 游戏进程里哪怕有人用别的方式加载过同名程序集, 这里也保证拿到的是目录里这份。
         /// </summary>
@@ -55,15 +60,27 @@ namespace NetChat
             {
                 string simple = new AssemblyName(args.Name).Name;
                 if (!simple.StartsWith("NAudio")) return null;
-
-                string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Mods", "NetChat");
-                string p = Path.Combine(dir, simple + ".dll");
-                return File.Exists(p) ? Assembly.Load(File.ReadAllBytes(p)) : null;
+                return LoadCached(simple);
             }
             catch
             {
                 return null;
             }
+        }
+
+        /// <summary>按文件名字节加载模组目录里的 dll, 带缓存(重复请求返回同一实例)</summary>
+        private static Assembly LoadCached(string simpleName)
+        {
+            Assembly cached;
+            if (byteLoaded.TryGetValue(simpleName, out cached)) return cached;
+
+            string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Mods", "NetChat");
+            string p = Path.Combine(dir, simpleName + ".dll");
+            if (!File.Exists(p)) return null;
+
+            Assembly asm = Assembly.Load(File.ReadAllBytes(p));
+            byteLoaded[simpleName] = asm;
+            return asm;
         }
 
         private static void Probe()
@@ -103,10 +120,13 @@ namespace NetChat
 
                 Exception last = null;
 
+                // 逐个候选找两个类型: Mp3FileReader 定义在门面里; WaveFormat 在 Core 里,
+                // 门面的类型转发在字节加载下解析不了(.NET Framework 实测 TypeLoadException),
+                // 所以必须"各找各的" —— 哪个程序集自己有就用哪个的
                 foreach (string dll in candidates)
                 {
                     Assembly asm;
-                    try { asm = Assembly.Load(File.ReadAllBytes(dll)); }
+                    try { asm = LoadCached(Path.GetFileNameWithoutExtension(dll)); }
                     catch (Exception e)
                     {
                         last = e;
@@ -114,15 +134,25 @@ namespace NetChat
                         continue;
                     }
 
-                    // Mp3FileReader 要具体类(公开构造); WaveFormat 在 Core 里, 经门面转发解析
-                    Type reader = FindType(asm, "NAudio.Wave.Mp3FileReader");
-                    Type fmt = reader != null ? FindType(asm, "NAudio.Wave.WaveFormat") : null;
-                    log.Add(Path.GetFileName(dll) + ": reader=" + (reader != null) + " fmt=" + (fmt != null));
+                    if (asm == null) { log.Add(Path.GetFileName(dll) + ": load err 文件读不到"); continue; }
 
-                    if (reader != null && fmt != null)
+                    if (mp3ReaderType == null)
                     {
-                        mp3ReaderType = reader;
-                        waveFormatType = fmt;
+                        Type r = FindType(asm, "NAudio.Wave.Mp3FileReader");
+                        if (r != null) mp3ReaderType = r;
+                    }
+
+                    if (waveFormatType == null)
+                    {
+                        Type f = FindType(asm, "NAudio.Wave.WaveFormat");
+                        if (f != null) waveFormatType = f;
+                    }
+
+                    log.Add(Path.GetFileName(dll) + ": reader=" + (mp3ReaderType != null)
+                        + " fmt=" + (waveFormatType != null));
+
+                    if (mp3ReaderType != null && waveFormatType != null)
+                    {
                         failReason = null;
                         return;
                     }

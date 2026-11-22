@@ -180,7 +180,7 @@ namespace NetChat
             if (Main.netMode != 1) return "只在联机客户端可用, 请先进服务器";
             if (!NetCommBridge.Ready) return "NetComm 未就绪";
             if (outgoing != null) return "上一首还在处理中";
-            if (ImageTransfer.Sending != null && !ImageTransfer.Sending.Done) return "图片还在发送, 等它传完";
+            if (ImageTransfer.IsBusy) return "图片还在发送队列里, 等它传完";
             if (IsReceiving) return "还在接收别人的歌, 等它传完";
 
             if (string.IsNullOrEmpty(path)) return "路径为空";
@@ -486,23 +486,31 @@ namespace NetChat
                 }
                 else if (job.Ext == "mp3" && MediaExt.Available)
                 {
-                    // WAV 没做出来削波率才会走这; 扩展包在就把 MP3 也验一遍
-                    string err;
-                    int sr, ch;
-                    byte[] pcm;
-                    string tmp = Path.Combine(EnsureMusicFolder() ?? Path.GetTempPath(), "ncaudit.tmp");
-                    if (EnsureMusicFolder() != null)
+                    // 扩展包在就把 MP3 也解码验一遍削波率
+                    string auditDir = EnsureMusicFolder();
+                    if (auditDir != null)
                     {
-                        File.WriteAllBytes(tmp, data);
-                        if (MediaExt.DecodeMp3(tmp, out sr, out ch, out pcm, out err))
+                        string tmp = Path.Combine(auditDir, "ncaudit.tmp");
+                        try
                         {
-                            float clip = MediaExt.ClipRatio(pcm);
-                            if (clip >= ClipLimit)
+                            File.WriteAllBytes(tmp, data);
+
+                            string err;
+                            int sr, ch;
+                            byte[] pcm;
+                            if (MediaExt.DecodeMp3(tmp, out sr, out ch, out pcm, out err))
                             {
-                                try { File.Delete(tmp); } catch { }
-                                FailRecv("波形密度异常(满振幅占比 " + (int)(clip * 100) + "%), 已丢弃");
-                                return;
+                                float clip = MediaExt.ClipRatio(pcm);
+                                if (clip >= ClipLimit)
+                                {
+                                    FailRecv("波形密度异常(满振幅占比 " + (int)(clip * 100) + "%), 已丢弃");
+                                    return;
+                                }
                             }
+                        }
+                        finally
+                        {
+                            try { File.Delete(tmp); } catch { }
                         }
                     }
                 }
@@ -709,8 +717,6 @@ namespace NetChat
                 bool finished = p.DoneConfirmed
                     || p.ResendRounds >= MaxResendRounds
                     || (now - p.LastActivity).TotalSeconds > ConfirmTimeoutSeconds;
-
-                bool stuck = !p.DoneConfirmed && finished;
 
                 if (finished)
                 {

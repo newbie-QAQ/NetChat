@@ -129,11 +129,15 @@ namespace NetChat
                 return;
             }
 
-            // 点歌: 邀请(SRQ)/回执(SRQOK 接受, SRQNO 拒绝) 和 音频分片
-            // 注意回执不是 "SRQ|" 开头, 之前只路由 SRQ 导致发送端永远等不到确认
+            // 点歌的全部控制消息: 邀请(SRQ)/回执(SRQOK 接受, SRQNO 拒绝)/
+            // 重传闭环(SNACK 催补传, SDONE 收齐确认, SABRT 放弃) —— 少路由一个前缀
+            // 对应的闭环环节就整体失灵(SRQOK 和 SNACK/SDONE 都栽过这个坑)
             if (msg.StartsWith(SongChannel.OfferMagic + "|")
                 || msg.StartsWith(SongChannel.OkMagic + "|")
-                || msg.StartsWith(SongChannel.NoMagic + "|"))
+                || msg.StartsWith(SongChannel.NoMagic + "|")
+                || msg.StartsWith(SongChannel.SnackMagic + "|")
+                || msg.StartsWith(SongChannel.DoneMagic + "|")
+                || msg.StartsWith(SongChannel.AbortMagic + "|"))
             {
                 SongChannel.OnMessage(msg, sender);
                 return;

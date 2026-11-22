@@ -17,6 +17,10 @@ namespace NetChat
         /// <summary>对方报上来的 NetChat 版本号("1.1"), 没收到过就是空串</summary>
         public string NetVersion = "";
 
+        /// <summary>他打过招呼(HERE)没有: 只有 NV 的影子条目是 false,
+        /// 第一次 HERE 到来时仍算新面孔, "进入了聊天室"才不会漏报</summary>
+        public bool SaidHello;
+
         /// <summary>已经向他广播过"进入了聊天室"; 摘除时只有广播过的人才报"离开"</summary>
         public bool Announced;
 
@@ -208,7 +212,14 @@ namespace NetChat
             {
                 peer = new Peer { Session = id };
                 Peers.Add(peer);
+            }
 
+            // 只有 NV 的影子条目(NV 抢在 HERE 前到)第一次打招呼也算新面孔
+            bool firstHello = !peer.SaidHello;
+            peer.SaidHello = true;
+
+            if (isNew || firstHello)
+            {
                 // 新面孔 = 有人刚加入, 补发一次自己的头像给他
                 Avatar.RequestOnJoin();
             }
@@ -219,7 +230,7 @@ namespace NetChat
             peer.LastSeen = DateTime.Now;
 
             // 安定期外的新面孔才报"进入", 安定期里的是进房时就在的老玩家
-            if (isNew && settleFrames <= 0)
+            if ((isNew || firstHello) && settleFrames <= 0)
             {
                 peer.Announced = true;
                 ChatRoom.AddSystem(DisplayName(peer) + " 进入了聊天室");

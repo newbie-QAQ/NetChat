@@ -72,6 +72,13 @@ namespace NetChat
         private static readonly Dictionary<string, RecvJob> jobs = new Dictionary<string, RecvJob>();
         private static int msgCounter;
 
+        /// <summary>图片还有没发完的(正在发或排队里还有): 点歌和更新推送必须等它,
+        /// 不然同发送者的两条大消息在 NetComm 重组器里交织, 两边都坏</summary>
+        public static bool IsBusy
+        {
+            get { return sendQueue.Count > 0 || (Sending != null && !Sending.Done); }
+        }
+
         //------------------------------ 发送 ------------------------------
 
         /// <summary>能不能再排一张; 不行就把原因写进 LastError</summary>

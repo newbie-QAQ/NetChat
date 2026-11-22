@@ -26,7 +26,7 @@ namespace NetChat
     internal static class UpdateChannel
     {
         /// <summary>本构建的版本号, 发版时手动改</summary>
-        public const string Version = "1.2.6";
+        public const string Version = "1.2.7";
 
         /// <summary>作者的游戏名, 提醒文案里用</summary>
         public const string AuthorName = "新手QAQ";
@@ -159,6 +159,24 @@ namespace NetChat
             if (!IsAuthor) return;
             DateTime now = DateTime.Now;
 
+            // 槽位易主后清掉旧计时: 不然新人顶上退掉的槽位时, 会沿用前任的
+            // "没报版本"时长, 自己的 NV 还没到就可能被误判成老版本私聊轰炸
+            List<int> stale = null;
+            foreach (KeyValuePair<int, DateTime> kv in emptySince)
+            {
+                bool found = false;
+                for (int i = 0; i < Presence.Peers.Count; i++)
+                {
+                    if (Presence.Peers[i].Slot == kv.Key) { found = true; break; }
+                }
+                if (!found) (stale ?? (stale = new List<int>())).Add(kv.Key);
+            }
+            if (stale != null)
+            {
+                foreach (int s in stale) { emptySince.Remove(s); rvTries.Remove(s); rvLast.Remove(s); }
+                Presence.VerLog("巡检: 清掉 " + stale.Count + " 个离线槽位的催报计时");
+            }
+
             for (int i = 0; i < Presence.Peers.Count; ++i)
             {
                 Peer p = Presence.Peers[i];
@@ -246,9 +264,9 @@ namespace NetChat
             // 作者视角: 发现旧版本玩家就自动推一次(广播全员, 但只有旧版本会接收)
             if (IsAuthor && Newer(Version, ver) && !attempted.Contains(slot))
             {
-                // 更新包和图片共用 NetComm 的重组器(按发送者区分), 别和自己正在发的图片撞车
-                SendJob sending = ImageTransfer.Sending;
-                if (sending != null && !sending.Done) return;
+                // 更新包和图片/点歌共用 NetComm 的重组器(一次只能拼一条大消息):
+                // 任何一个在传(含排队的图)都先不推, 等下一次 NV 心跳再触发
+                if (ImageTransfer.IsBusy || SongChannel.IsSending) return;
 
                 if (SendPackage())
                 {

@@ -31,6 +31,31 @@ namespace NetChat
 
         public static bool IsPlaying;
 
+        /// <summary>播放音量(0~1)。改了立刻作用到正在播的实例并落盘, 播放中拖滑条即时生效</summary>
+        public static float Volume
+        {
+            get { return MusicSetting.Volume; }
+            set
+            {
+                MusicSetting.Volume = Math.Max(0f, Math.Min(1f, value));
+                ApplyVolume();
+                MusicSetting.Persist();
+            }
+        }
+
+        /// <summary>把当前音量推给三条播放路径里活着的那条</summary>
+        private static void ApplyVolume()
+        {
+            try
+            {
+                float v = MusicSetting.Volume;
+                if (wavInstance != null) wavInstance.Volume = v;
+                if (streamPlayer != null) streamPlayer.Volume = v;
+                if (usingMediaPlayer) MediaPlayer.Volume = v;
+            }
+            catch { }
+        }
+
         /// <summary>播放; 返回 null = 成功, 其他 = 失败原因</summary>
         public static string Play(SongItem song)
         {
@@ -46,7 +71,7 @@ namespace NetChat
                     wavStream = new MemoryStream(File.ReadAllBytes(song.Path));
                     SoundEffect effect = SoundEffect.FromStream(wavStream);
                     wavInstance = effect.CreateInstance();
-                    wavInstance.Volume = 0.8f;
+                    wavInstance.Volume = Volume;
                     wavInstance.Play();
 
                     Current = song;
@@ -71,7 +96,7 @@ namespace NetChat
                     streamChannels = channels;
 
                     streamPlayer = new DynamicSoundEffectInstance(rate, channels == 1 ? AudioChannels.Mono : AudioChannels.Stereo);
-                    streamPlayer.Volume = 0.8f;
+                    streamPlayer.Volume = Volume;
                     streamPlayer.Play();
                     Feed();
 
@@ -83,7 +108,7 @@ namespace NetChat
 
                 // MP3 无扩展包: 交给系统 MediaPlayer(会暂时接管游戏音乐)
                 mediaSong = Song.FromUri(song.Name, new Uri(song.Path, UriKind.Absolute));
-                MediaPlayer.Volume = 0.8f;
+                MediaPlayer.Volume = Volume;
                 MediaPlayer.Play(mediaSong);
                 usingMediaPlayer = true;
 

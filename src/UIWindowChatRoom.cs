@@ -600,6 +600,10 @@ namespace NetChat
         private int wheelPrev;
         private float scrollUp;
 
+        /// <summary>正在拖标题栏移动整个面板</summary>
+        private bool dragTitle;
+        private Vector2 dragOff;
+
         public UIEmojiPicker()
         {
             Width.Pixels = Cols * Cell + 10f;
@@ -652,6 +656,28 @@ namespace NetChat
             if (!open) return;
 
             CalculatedStyle dim = GetDimensions();
+
+            // 标题栏拖动: 顶部 22px 按住拖整块面板, 和点歌面板一个写法
+            Rectangle titleRect = new Rectangle((int)dim.X, (int)dim.Y, (int)dim.Width, 22);
+            if (Main.mouseLeft && Main.mouseLeftRelease && titleRect.Contains(Main.mouseX, Main.mouseY)
+                && !PlayerInput.IgnoreMouseInterface)
+            {
+                dragTitle = true;
+                dragOff = new Vector2(Left.Pixels - Main.mouseX, Top.Pixels - Main.mouseY);
+            }
+
+            if (dragTitle && Main.mouseLeft)
+            {
+                Left.Pixels = Main.mouseX + dragOff.X;
+                Top.Pixels = Main.mouseY + dragOff.Y;
+                ClampToParent();
+                Main.LocalPlayer.mouseInterface = true;
+            }
+            else
+            {
+                dragTitle = false;
+            }
+
             ChatDraw.DrawPanel(spriteBatch, dim, "表情 (点击发送, 滚轮翻页)");
 
             int totalRows = (ChatEmoji.Count + Cols - 1) / Cols;
@@ -710,13 +736,26 @@ namespace NetChat
         public override void LeftClick(UIMouseEvent evt)
         {
             base.LeftClick(evt);
-            if (!open) return;
+            if (!open || dragTitle) return;   // 拖完松手不算点表情
 
             int id = HoveredEmote(GetDimensions());
             if (id < 0) return;
 
             open = false;
             Demo.SendEmote(ProfileSetting.CurrentName(), id);
+        }
+
+        /// <summary>拖动后钳回父容器(聊天室窗口内容区)范围内</summary>
+        private void ClampToParent()
+        {
+            if (Parent == null) return;
+
+            CalculatedStyle pd = Parent.GetDimensions();
+
+            if (Left.Pixels < 0f) Left.Pixels = 0f;
+            if (Top.Pixels < 0f) Top.Pixels = 0f;
+            if (Left.Pixels + Width.Pixels > pd.Width) Left.Pixels = pd.Width - Width.Pixels;
+            if (Top.Pixels + Height.Pixels > pd.Height) Top.Pixels = pd.Height - Height.Pixels;
         }
     }
 

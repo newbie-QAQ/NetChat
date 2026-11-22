@@ -110,6 +110,13 @@ namespace NetChat
         private bool open;
         private readonly List<KeyValuePair<Rectangle, Action>> hits = new List<KeyValuePair<Rectangle, Action>>();
 
+        /// <summary>正在拖音量滑条</summary>
+        private bool volDragging;
+
+        /// <summary>正在拖标题栏移动整个面板</summary>
+        private bool dragTitle;
+        private Vector2 dragOff;
+
         public UIMusicPanel()
         {
             Width.Pixels = 340f;
@@ -150,6 +157,28 @@ namespace NetChat
             hits.Clear();
 
             CalculatedStyle dim = GetDimensions();
+
+            // 标题栏拖动: 顶部 22px 按住拖整块面板(坐标相对聊天室窗口), 拖动中钳在窗口范围内
+            Rectangle titleRect = new Rectangle((int)dim.X, (int)dim.Y, (int)dim.Width, 22);
+            if (Main.mouseLeft && Main.mouseLeftRelease && titleRect.Contains(Main.mouseX, Main.mouseY)
+                && !PlayerInput.IgnoreMouseInterface)
+            {
+                dragTitle = true;
+                dragOff = new Vector2(Left.Pixels - Main.mouseX, Top.Pixels - Main.mouseY);
+            }
+
+            if (dragTitle && Main.mouseLeft)
+            {
+                Left.Pixels = Main.mouseX + dragOff.X;
+                Top.Pixels = Main.mouseY + dragOff.Y;
+                ClampToParent();
+                Main.LocalPlayer.mouseInterface = true;
+            }
+            else
+            {
+                dragTitle = false;
+            }
+
             ChatDraw.DrawPanel(spriteBatch, dim, "点歌");
 
             float y = dim.Y + 26f;
@@ -211,7 +240,7 @@ namespace NetChat
 
             // 曲库
             y = SectionTitle(spriteBatch, x, y, w, "曲库 " + SongChannel.Library.Count + " 首");
-            float listBottom = dim.Y + dim.Height - 34f;
+            float listBottom = dim.Y + dim.Height - 58f;   // 底部留出音量滑条和播放状态两行
 
             List<SongItem> lib = SongChannel.Library;
             for (int i = 0; i < lib.Count; i++)
@@ -246,6 +275,34 @@ namespace NetChat
                 y += Row;
             }
 
+            // 音量滑条: 按住拖动, 播放中即时生效(改 Volume 会同步落盘)
+            float barY = dim.Y + dim.Height - 48f;
+            float barX = x + 34f;
+            float barW = w - 104f;
+            Rectangle bar = new Rectangle((int)barX, (int)barY, (int)barW, 10);
+            bool barHover = bar.Contains(Main.mouseX, Main.mouseY) && !PlayerInput.IgnoreMouseInterface;
+
+            if (barHover && Main.mouseLeft && Main.mouseLeftRelease) volDragging = true;
+            if (volDragging && Main.mouseLeft)
+            {
+                SongPlayer.Volume = Math.Max(0f, Math.Min(1f, (Main.mouseX - barX) / barW));
+                Main.LocalPlayer.mouseInterface = true;
+            }
+            else
+            {
+                volDragging = false;
+            }
+
+            if (barHover) Main.LocalPlayer.mouseInterface = true;
+
+            Utils.DrawBorderString(spriteBatch, "音量", new Vector2(x, barY - 1f), Color.Gray, 0.75f);
+            spriteBatch.Draw(TextureAssets.MagicPixel.Value, bar, new Color(45, 55, 90) * 0.95f);
+            spriteBatch.Draw(TextureAssets.MagicPixel.Value,
+                new Rectangle(bar.X, bar.Y, (int)(barW * SongPlayer.Volume), bar.Height),
+                volDragging ? new Color(160, 210, 255) * 0.95f : new Color(120, 180, 255) * 0.9f);
+            Utils.DrawBorderString(spriteBatch, (int)Math.Round(SongPlayer.Volume * 100f) + "%",
+                new Vector2(barX + barW + 10f, barY - 1f), Color.White, 0.75f);
+
             // 底部: 播放状态 + 扩展包状态
             if (SongPlayer.Current != null)
             {
@@ -261,8 +318,8 @@ namespace NetChat
                 new Vector2(dim.X + dim.Width - 10f - extWidth, dim.Y + 7f),
                 MediaExt.Available ? new Color(140, 230, 140) : new Color(255, 150, 150), 0.7f);
 
-            // 处理点击
-            if (Main.mouseLeft && Main.mouseLeftRelease)
+            // 处理点击(拖动标题/滑条的那一下不当作按钮点击)
+            if (!dragTitle && !volDragging && Main.mouseLeft && Main.mouseLeftRelease)
             {
                 foreach (KeyValuePair<Rectangle, Action> h in hits)
                 {
@@ -274,6 +331,19 @@ namespace NetChat
                     }
                 }
             }
+        }
+
+        /// <summary>拖动后钳回父容器(聊天室窗口内容区)范围内</summary>
+        private void ClampToParent()
+        {
+            if (Parent == null) return;
+
+            CalculatedStyle pd = Parent.GetDimensions();
+
+            if (Left.Pixels < 0f) Left.Pixels = 0f;
+            if (Top.Pixels < 0f) Top.Pixels = 0f;
+            if (Left.Pixels + Width.Pixels > pd.Width) Left.Pixels = pd.Width - Width.Pixels;
+            if (Top.Pixels + Height.Pixels > pd.Height) Top.Pixels = pd.Height - Height.Pixels;
         }
 
         /// <summary>画一个按钮并登记点击(不推进行坐标, 由调用方自己排)</summary>

@@ -18,6 +18,7 @@ namespace NetChat
     internal static class MediaExt
     {
         private static bool probed;
+        private static bool handlerAttached;
         private static Type mp3ReaderType;   // NAudio.Wave.Mp3FileReader
         private static Type waveFormatType;  // NAudio.Wave.WaveFormat
 
@@ -30,15 +31,38 @@ namespace NetChat
             get { Probe(); return mp3ReaderType != null; }
         }
 
-        /// <summary>面板右下角那行字: 已启用 / 未装(原因)</summary>
+        /// <summary>面板右上角那行字: 已启用 / 未装(原因)</summary>
         public static string StatusText
         {
             get
             {
                 Probe();
                 return mp3ReaderType != null
-                    ? "点歌扩展: 已启用"
-                    : "点歌扩展: 未装" + (failReason == null ? "" : " (" + failReason + ")");
+                    ? "扩展: 已启用"
+                    : "扩展: 未装" + (failReason == null ? "" : " (" + failReason + ")");
+            }
+        }
+
+        /// <summary>
+        /// NAudio 程序集解析器: 默认绑定找不到的 NAudio.* 都从模组目录按字节加载。
+        /// 常驻不摘(只在成功后有用: 之后 JIT Mp3FileReader 方法体时还需要它来补依赖)。
+        /// 用字节加载是为了绕开"同身份程序集已加载就返回旧实例"的坑——
+        /// 游戏进程里哪怕有人用别的方式加载过同名程序集, 这里也保证拿到的是目录里这份。
+        /// </summary>
+        private static Assembly ResolveNAudio(object sender, ResolveEventArgs args)
+        {
+            try
+            {
+                string simple = new AssemblyName(args.Name).Name;
+                if (!simple.StartsWith("NAudio")) return null;
+
+                string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Mods", "NetChat");
+                string p = Path.Combine(dir, simple + ".dll");
+                return File.Exists(p) ? Assembly.Load(File.ReadAllBytes(p)) : null;
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -47,9 +71,12 @@ namespace NetChat
             if (probed) return;
             probed = true;
 
+            List<string> log = new List<string>();
+
             try
             {
                 string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Mods", "NetChat");
+                log.Add("dir=" + dir);
                 if (!Directory.Exists(dir)) { failReason = "找不到 " + dir; return; }
 
                 // 候选: 门面 NAudio.dll 优先, 然后目录里其它 NAudio*.dll(哪个有 Mp3FileReader 用哪个)
@@ -64,20 +91,33 @@ namespace NetChat
                     }
                 }
                 catch { }
+                log.Add("candidates=" + string.Join(",", candidates.ConvertAll(Path.GetFileName).ToArray()));
 
                 if (candidates.Count == 0) { failReason = "目录里没有 NAudio.dll"; return; }
+
+                if (!handlerAttached)
+                {
+                    handlerAttached = true;
+                    AppDomain.CurrentDomain.AssemblyResolve += ResolveNAudio;
+                }
 
                 Exception last = null;
 
                 foreach (string dll in candidates)
                 {
                     Assembly asm;
-                    try { asm = Assembly.LoadFrom(dll); }
-                    catch (Exception e) { last = e; continue; }
+                    try { asm = Assembly.Load(File.ReadAllBytes(dll)); }
+                    catch (Exception e)
+                    {
+                        last = e;
+                        log.Add(Path.GetFileName(dll) + ": load err " + (e.InnerException ?? e).Message);
+                        continue;
+                    }
 
-                    // Mp3FileReader 要具体类(公开构造), Base 是抽象基类不认
+                    // Mp3FileReader 要具体类(公开构造); WaveFormat 在 Core 里, 经门面转发解析
                     Type reader = FindType(asm, "NAudio.Wave.Mp3FileReader");
                     Type fmt = reader != null ? FindType(asm, "NAudio.Wave.WaveFormat") : null;
+                    log.Add(Path.GetFileName(dll) + ": reader=" + (reader != null) + " fmt=" + (fmt != null));
 
                     if (reader != null && fmt != null)
                     {
@@ -95,6 +135,20 @@ namespace NetChat
             catch (Exception e)
             {
                 failReason = "加载失败: " + (e.InnerException ?? e).Message;
+                log.Add("probe err: " + (e.InnerException ?? e).Message);
+            }
+            finally
+            {
+                // 探测日志落盘, 现场排障用(每次启动覆盖)
+                try
+                {
+                    string dir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Mods", "NetChat");
+                    if (Directory.Exists(dir))
+                    {
+                        File.WriteAllLines(Path.Combine(dir, "ext_probe_log.txt"), log.ToArray());
+                    }
+                }
+                catch { }
             }
         }
 

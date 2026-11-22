@@ -254,10 +254,12 @@ namespace NetChat
                     new Vector2(x, dim.Y + dim.Height - 24f), new Color(255, 210, 120), 0.75f);
             }
 
+            // 扩展包状态: 放标题行右端, 离底部按钮行远一点(之前放底部会和按钮挤在一起)
             string extStatus = MediaExt.StatusText;
+            float extWidth = ChatText.Width(extStatus) * 0.7f;
             Utils.DrawBorderString(spriteBatch, extStatus,
-                new Vector2(dim.X + dim.Width - ChatText.Width(extStatus) * 0.7f - 10f, dim.Y + dim.Height - 24f),
-                MediaExt.Available ? new Color(140, 230, 140) : Color.Gray, 0.7f);
+                new Vector2(dim.X + dim.Width - 10f - extWidth, dim.Y + 7f),
+                MediaExt.Available ? new Color(140, 230, 140) : new Color(255, 150, 150), 0.7f);
 
             // 处理点击
             if (Main.mouseLeft && Main.mouseLeftRelease)

@@ -29,6 +29,7 @@ namespace NetChat
         private static FieldInfo recField;
         private static FieldInfo lastSenderField;
         private static PropertyInfo slicesProp;
+        private static MethodInfo commStatusMethod;
 
         /// <summary>绑定到了哪个 NetComm, 给诊断用</summary>
         public static string ResolvedInfo = "未解析";
@@ -94,6 +95,14 @@ namespace NetChat
                 if (recField != null)
                 {
                     lastSenderField = recField.FieldType.GetField("LastSender", BindingFlags.Public | BindingFlags.Instance);
+                }
+
+                // NetComm.Comm.Status() (internal static): 发/收/各类丢弃计数, 诊断传输问题用
+                Type commType = asm.GetType("NetComm.Comm", false);
+                if (commType != null)
+                {
+                    commStatusMethod = commType.GetMethod("Status",
+                        BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
                 }
 
                 LastError = null;
@@ -227,6 +236,16 @@ namespace NetChat
             catch { }
 
             return false;
+        }
+
+        /// <summary>NetComm 的收发统计字符串(丢弃计数等), 拿不到返回 null</summary>
+        public static string CommStatus()
+        {
+            Resolve();
+            if (commStatusMethod == null) return null;
+
+            try { return (string)commStatusMethod.Invoke(null, null); }
+            catch { return null; }
         }
 
         /// <summary>读 NetComm 的每帧片数设置; NetComm 太旧没有这项时返回 8(原版定值)</summary>

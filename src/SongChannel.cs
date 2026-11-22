@@ -41,6 +41,12 @@ namespace NetChat
         public string[] Parts;
         public int Got;
         public DateTime Last;
+
+        /// <summary>上次发 SNACK(催对方补传缺片)的时间</summary>
+        public DateTime LastNack;
+
+        /// <summary>已经催了几次</summary>
+        public int Nacks;
     }
 
     /// <summary>
@@ -66,13 +72,43 @@ namespace NetChat
         public const string NoMagic = "SRQNO";
         public const string SliceMagic = "NS1";
 
+        /// <summary>接收端催补传: SNACK|msgId|已有片位图</summary>
+        public const string SnackMagic = "SNACK";
+
+        /// <summary>接收端确认收齐: SDONE|msgId</summary>
+        public const string DoneMagic = "SDONE";
+
+        /// <summary>接收端彻底放弃: SABRT|msgId</summary>
+        public const string AbortMagic = "SABRT";
+
         public const int MaxMp3Bytes = 5 * 1024 * 1024;
         public const int MaxWavBytes = 8 * 1024 * 1024;
         public const int MaxSeconds = 600;
 
         private const int MaxOffers = 4;
         private const int OfferTimeoutSeconds = 45;
+
+        /// <summary>数据还在 NetComm 队列里的最长等待(队列异常不清空时兜底放行)</summary>
         private const int SendWatchdogSeconds = 150;
+
+        /// <summary>数据发完(队列清空)后等多久的 SDONE 确认; 期间靠 SNACK 补传缺片</summary>
+        private const int ConfirmTimeoutSeconds = 300;
+
+        /// <summary>最多补传几轮(防永远补不完)</summary>
+        private const int MaxResendRounds = 30;
+
+        /// <summary>接收端: 数据静默多久开始催补传(SNACK)</summary>
+        private const int NackAfterSeconds = 8;
+
+        /// <summary>接收端: 两次 SNACK 的最小间隔</summary>
+        private const int NackGapSeconds = 8;
+
+        /// <summary>接收端: 一首歌最多催几次</summary>
+        private const int NackMaxRounds = 20;
+
+        /// <summary>接收端: 催了补传也补不上来, 这么久之后才认定传输彻底中断</summary>
+        private const int RecvHardTimeoutSeconds = 120;
+
         private const int MaxRecvJobs = 2;
         private const float ClipLimit = 0.55f;
 
@@ -84,10 +120,24 @@ namespace NetChat
             public string Name;
             public string Ext;
             public byte[] Data;
+            public uint Crc;
+            public int Count;
             public DateTime OfferAt;
             public DateTime DataStart;
             public int TotalQueued;
             public bool GotOk;
+
+            /// <summary>NetComm 待发队列已清空(不代表对方收齐了)</summary>
+            public bool Drained;
+
+            /// <summary>最近一次发送活动(开始/补传), 判对方是否还在线用</summary>
+            public DateTime LastActivity;
+
+            /// <summary>已经按对方 SNACK 补传了几轮</summary>
+            public int ResendRounds;
+
+            /// <summary>对方已确认收齐(SDONE)</summary>
+            public bool DoneConfirmed;
         }
 
         private static PendingSend outgoing;
@@ -118,6 +168,9 @@ namespace NetChat
         private static readonly HashSet<string> accepted = new HashSet<string>();
         private static readonly List<SongItem> library = new List<SongItem>();
         private static bool libraryScanned;
+
+        /// <summary>收到但没认领的音频分片计数(诊断用)</summary>
+        private static int slDropped;
 
         //------------------------------ 发送 ------------------------------
 
@@ -201,24 +254,15 @@ namespace NetChat
         /// <summary>对方点了接收: 开始传数据</summary>
         private static void StartData(PendingSend p)
         {
-            int chunk = ImageProtocol.ChunkBytes;
-            int count = (p.Data.Length + chunk - 1) / chunk;
-            uint crc = ImageProtocol.Crc32(p.Data);
+            int count = (p.Data.Length + ImageProtocol.ChunkBytes - 1) / ImageProtocol.ChunkBytes;
+            p.Count = count;
+            p.Crc = ImageProtocol.Crc32(p.Data);
 
             int failed = 0;
             for (int i = 0; i < count; i++)
             {
-                int off = i * chunk;
-                int len = Math.Min(chunk, p.Data.Length - off);
-
-                byte[] part = new byte[len];
-                Buffer.BlockCopy(p.Data, off, part, 0, len);
-
-                string msg = SliceMagic + "|" + p.MsgId + "|" + i + "|" + count
-                    + "|" + p.Data.Length + "|" + crc + "|" + p.Name
-                    + "|" + Convert.ToBase64String(part);
-
-                if (!NetCommBridge.Send(Channel, Encoding.UTF8.GetBytes(msg))) failed++;
+                byte[] msg = BuildSliceMessage(p, i);
+                if (msg == null || !NetCommBridge.Send(Channel, msg)) failed++;
             }
 
             if (failed > 0)
@@ -231,8 +275,29 @@ namespace NetChat
 
             p.GotOk = true;
             p.DataStart = DateTime.Now;
+            p.LastActivity = DateTime.Now;
             p.TotalQueued = NetCommBridge.PendingSlices();
             SendStatus = "传输中 0%  " + p.Name;
+            Presence.VerLog("开始传数据 " + p.Name + " msgs=" + count
+                + " 队列=" + p.TotalQueued + " (netcomm=" + NetCommBridge.CommStatus() + ")");
+        }
+
+        /// <summary>按序号组装一条 NS1 音频分片消息; 序号越界返回 null</summary>
+        private static byte[] BuildSliceMessage(PendingSend p, int index)
+        {
+            int chunk = ImageProtocol.ChunkBytes;
+            int off = index * chunk;
+            if (off < 0 || off >= p.Data.Length) return null;
+
+            int len = Math.Min(chunk, p.Data.Length - off);
+            byte[] part = new byte[len];
+            Buffer.BlockCopy(p.Data, off, part, 0, len);
+
+            string msg = SliceMagic + "|" + p.MsgId + "|" + index + "|" + p.Count
+                + "|" + p.Data.Length + "|" + p.Crc + "|" + p.Name
+                + "|" + Convert.ToBase64String(part);
+
+            return Encoding.UTF8.GetBytes(msg);
         }
 
         //------------------------------ 接收 ------------------------------
@@ -323,6 +388,8 @@ namespace NetChat
 
             bool okSent = NetCommBridge.Send(Channel, Encoding.UTF8.GetBytes(OkMagic + "|" + msgId));
             if (!okSent) ChatRoom.AddSystem("接受回执没发出去: " + (NetCommBridge.LastError ?? "NetComm 拒绝"));
+            Presence.VerLog("接受点歌 " + offer.Name + " msgId=" + msgId + " msgs=" + job.Count
+                + " 回执sent=" + okSent);
         }
 
         public static void Decline(string msgId)
@@ -339,19 +406,26 @@ namespace NetChat
         {
             if (parts.Length != 8) return;
             if (parts[0] != SliceMagic) return;
-            if (Receiving == null || parts[1] != Receiving.MsgId) return;
+
+            if (Receiving == null || parts[1] != Receiving.MsgId)
+            {
+                slDropped++;
+                return;
+            }
 
             int index, count, total;
             uint crc;
-            if (!int.TryParse(parts[2], out index)) return;
-            if (!int.TryParse(parts[3], out count)) return;
-            if (!int.TryParse(parts[4], out total)) return;
-            if (!uint.TryParse(parts[5], out crc)) return;
-            if (index < 0 || index >= Receiving.Count) return;
-            if (count != Receiving.Count || total != Receiving.TotalBytes) return;
+            if (!int.TryParse(parts[2], out index)) { slDropped++; return; }
+            if (!int.TryParse(parts[3], out count)) { slDropped++; return; }
+            if (!int.TryParse(parts[4], out total)) { slDropped++; return; }
+            if (!uint.TryParse(parts[5], out crc)) { slDropped++; return; }
+            if (index < 0 || index >= Receiving.Count) { slDropped++; return; }
+            if (count != Receiving.Count || total != Receiving.TotalBytes) { slDropped++; return; }
 
             RecvSong job = Receiving;
             job.Last = DateTime.Now;
+
+            if (job.Got == 0) Presence.VerLog("首片到达 " + job.Name + " idx=" + index);
 
             // CRC 以第一片报的为准, 后面片的对不上直接丢
             if (job.Crc == 0) job.Crc = crc;
@@ -455,6 +529,11 @@ namespace NetChat
                 ChatRoom.AddSystem("收到点歌《" + job.Name + "》(" + (info.Seconds / 60) + ":"
                     + (info.Seconds % 60).ToString("00") + "), 已进曲库, 打开点歌面板播放");
                 SoundPing();
+
+                // 通知对方"收齐了"; 这条确认可能丢, Update 里会补发几次
+                try { NetCommBridge.Send(Channel, Encoding.UTF8.GetBytes(DoneMagic + "|" + job.MsgId)); } catch { }
+                doneAcks.Add(new DoneAck { MsgId = job.MsgId, Sent = DateTime.Now });
+                Presence.VerLog("收齐并发送 SDONE " + job.Name + " " + job.MsgId);
             }
             catch (Exception e)
             {
@@ -464,10 +543,39 @@ namespace NetChat
 
         private static void FailRecv(string why)
         {
-            if (Receiving != null) accepted.Remove(Receiving.MsgId);
+            if (Receiving != null)
+            {
+                accepted.Remove(Receiving.MsgId);
+                SendAbort(Receiving.MsgId);
+                Presence.VerLog("接收失败 " + Receiving.Name + ": " + why
+                    + " got=" + Receiving.Got + "/" + Receiving.Count);
+            }
             Receiving = null;
             RecvStatus = "接收失败: " + why;
             ChatRoom.AddSystem("点歌接收失败: " + why);
+        }
+
+        /// <summary>告诉对方别再传了(补传也救不回来/彻底放弃)</summary>
+        private static void SendAbort(string msgId)
+        {
+            try { NetCommBridge.Send(Channel, Encoding.UTF8.GetBytes(AbortMagic + "|" + msgId)); }
+            catch { }
+        }
+
+        /// <summary>催对方补传缺片: 位图第 i 位 = 已收到第 i 条消息</summary>
+        private static void SendNack(RecvSong job)
+        {
+            byte[] mask = new byte[(job.Count + 7) / 8];
+            for (int i = 0; i < job.Count; i++)
+            {
+                if (job.Parts[i] != null) mask[i >> 3] |= (byte)(1 << (i & 7));
+            }
+
+            bool ok = NetCommBridge.Send(Channel,
+                Encoding.UTF8.GetBytes(SnackMagic + "|" + job.MsgId + "|" + Convert.ToBase64String(mask)));
+
+            Presence.VerLog("SNACK -> 缺 " + (job.Count - job.Got) + " 片 sent=" + ok
+                + " (第 " + job.Nacks + " 次催)");
         }
 
         //------------------------------ 回执(发给别人的) ------------------------------
@@ -565,15 +673,17 @@ namespace NetChat
 
         //------------------------------ 每帧 / 杂项 ------------------------------
 
-        /// <summary>Demo.UpdatePostfix 每帧调: 推进发送进度, 清超时的邀请</summary>
+        /// <summary>Demo.UpdatePostfix 每帧调: 推进发送进度, 清超时的邀请, 驱动补传与确认</summary>
         public static void Update()
         {
+            DateTime now = DateTime.Now;
+
             // 发送端: 邀请超时
             PendingSend p = outgoing;
 
             if (p != null && !p.GotOk)
             {
-                if ((DateTime.Now - p.OfferAt).TotalSeconds > OfferTimeoutSeconds)
+                if ((now - p.OfferAt).TotalSeconds > OfferTimeoutSeconds)
                 {
                     ChatRoom.AddSystem("点歌邀请 45 秒没等到回执, 已放弃《" + p.Name + "》");
                     outgoing = null;
@@ -581,56 +691,118 @@ namespace NetChat
                 }
                 else
                 {
-                    SendStatus = "等待对方确认 " + (int)(OfferTimeoutSeconds - (DateTime.Now - p.OfferAt).TotalSeconds) + "s  " + p.Name;
+                    SendStatus = "等待对方确认 " + (int)(OfferTimeoutSeconds - (now - p.OfferAt).TotalSeconds) + "s  " + p.Name;
                 }
             }
 
-            // 发送端: 数据传输进度(队列被图片共用时读数会偏大, 150 秒看门狗兜底)
+            // 发送端: 数据阶段 —— 队列清空不等于对方收齐, 以对方的 SDONE 为准
             if (p != null && p.GotOk)
             {
                 int pending = NetCommBridge.PendingSlices();
-                bool finished = pending <= 0
-                    || (DateTime.Now - p.DataStart).TotalSeconds > SendWatchdogSeconds;
+
+                if (!p.Drained && pending <= 0)
+                {
+                    p.Drained = true;
+                    Presence.VerLog("发送队列已清空 " + p.Name + ", 等对方确认 (netcomm=" + NetCommBridge.CommStatus() + ")");
+                }
+
+                bool finished = p.DoneConfirmed
+                    || p.ResendRounds >= MaxResendRounds
+                    || (now - p.LastActivity).TotalSeconds > ConfirmTimeoutSeconds;
+
+                bool stuck = !p.DoneConfirmed && finished;
 
                 if (finished)
                 {
-                    bool stuck = pending > 0;
                     outgoing = null;
 
-                    if (stuck)
+                    if (p.DoneConfirmed)
                     {
-                        SendStatus = "发送超时, 已放行(很可能没传到)";
-                        ChatRoom.AddSystem("点歌《" + p.Name + "》长时间没传完, 已强制放行");
+                        SendStatus = "已发完 " + p.Name;
                     }
                     else
                     {
-                        SendStatus = "已发完 " + p.Name;
-                        ChatRoom.AddSystem("[点歌] 《" + p.Name + "》已传给对方");
+                        SendStatus = "发送未完成, 已放弃 " + p.Name;
+                        ChatRoom.AddSystem("点歌《" + p.Name + "》对方迟迟没确认收齐, 已放弃(" 
+                            + (p.ResendRounds >= MaxResendRounds ? "补传轮次用尽" : "确认超时") + ")");
                     }
+                    Presence.VerLog("发送结束 " + p.Name + " confirmed=" + p.DoneConfirmed + " rounds=" + p.ResendRounds);
                 }
-                else if (p.TotalQueued > 0)
+                else
                 {
-                    float prog = 1f - (float)Math.Min(pending, p.TotalQueued) / p.TotalQueued;
-                    SendStatus = "传输中 " + (int)(prog * 100f) + "%  " + p.Name;
+                    float prog = p.TotalQueued > 0 ? 1f - (float)Math.Min(pending, p.TotalQueued) / p.TotalQueued : 0f;
+                    SendStatus = p.Drained
+                        ? "等待对方确认收齐 " + p.Name
+                        : "传输中 " + (int)(prog * 100f) + "%  " + p.Name;
                 }
+            }
+
+            // 发送端: 数据还在队列里卡死(NetComm 异常)兜底
+            if (p != null && p.GotOk && !p.Drained
+                && (now - p.DataStart).TotalSeconds > SendWatchdogSeconds && NetCommBridge.PendingSlices() > 0)
+            {
+                NetCommBridge.ClearNetQueue();
+                p.Drained = true;
+                Presence.VerLog("发送队列 150 秒没清空, 强制放行 " + p.Name);
             }
 
             // 接收端: 邀请过期(2 分钟没人理就撤下)
             for (int i = Offers.Count - 1; i >= 0; i--)
             {
-                if ((DateTime.Now - Offers[i].At).TotalMinutes > 2) Offers.RemoveAt(i);
+                if ((now - Offers[i].At).TotalMinutes > 2) Offers.RemoveAt(i);
             }
 
-            // 接收端: 数据卡死(对方中途退了)
-            if (Receiving != null && (DateTime.Now - Receiving.Last).TotalSeconds > 30)
+            // 接收端: 缺片催补传 / 彻底中断判定
+            if (Receiving != null)
             {
-                string name = Receiving.Name;
-                accepted.Remove(Receiving.MsgId);
-                Receiving = null;
-                RecvStatus = "对方中断了《" + name + "》的传输";
-                ChatRoom.AddSystem("点歌《" + name + "》传输中断(对方可能退了)");
+                RecvSong job = Receiving;
+                double idle = (now - job.Last).TotalSeconds;
+
+                if (job.Got == 0 && idle > 30)
+                {
+                    FailRecv("对方一直没开始传输");
+                }
+                else if (job.Got > 0 && job.Got < job.Count)
+                {
+                    if (idle >= NackAfterSeconds && job.Nacks < NackMaxRounds
+                        && (now - job.LastNack).TotalSeconds >= NackGapSeconds)
+                    {
+                        SendNack(job);
+                        job.LastNack = now;
+                        job.Nacks++;
+                    }
+
+                    if (idle > RecvHardTimeoutSeconds)
+                    {
+                        FailRecv("补传后还是没等到剩余数据(对方可能退了)");
+                    }
+                }
+            }
+
+            // 发送端: 已收齐的确认 SDONE 防丢, 补发几次
+            for (int i = doneAcks.Count - 1; i >= 0; i--)
+            {
+                DoneAck d = doneAcks[i];
+                if (d.Times >= 3 || d.Sent.AddSeconds(6) < now) { doneAcks.RemoveAt(i); continue; }
+
+                if ((now - d.Sent).TotalSeconds >= 2)
+                {
+                    try { NetCommBridge.Send(Channel, Encoding.UTF8.GetBytes(DoneMagic + "|" + d.MsgId)); } catch { }
+                    d.Times++;
+                    d.Sent = now;
+                }
             }
         }
+
+        /// <summary>SDONE 补发条目: 接收端收齐后通知发送端, 防这条确认本身丢了</summary>
+        private sealed class DoneAck
+        {
+            public string MsgId;
+            public DateTime Sent;
+            public int Times;
+        }
+
+        private static readonly List<DoneAck> doneAcks = new List<DoneAck>();
 
         /// <summary>收到的一条 NetComm 点歌消息(由 Demo 按前缀分发)</summary>
         public static void OnMessage(string text, int senderSlot)
@@ -643,12 +815,72 @@ namespace NetChat
             if (parts[0] == OfferMagic) OnOffer(parts, senderSlot);
             else if (parts[0] == OkMagic) OnOk(parts[1]);
             else if (parts[0] == NoMagic) OnNo(parts[1]);
+            else if (parts[0] == SnackMagic && parts.Length >= 3) OnNack(parts[1], parts[2]);
+            else if (parts[0] == DoneMagic) OnDone(parts[1]);
+            else if (parts[0] == AbortMagic) OnAbort(parts[1]);
+        }
+
+        /// <summary>对方催补传: 位图里没置位的片重新入队</summary>
+        private static void OnNack(string msgId, string maskB64)
+        {
+            if (outgoing == null || outgoing.MsgId != msgId || !outgoing.GotOk) return;
+
+            byte[] mask;
+            try { mask = Convert.FromBase64String(maskB64); }
+            catch { return; }
+
+            int resent = 0;
+            for (int i = 0; i < outgoing.Count; i++)
+            {
+                bool has = (i >> 3) < mask.Length && (mask[i >> 3] & (1 << (i & 7))) != 0;
+                if (has) continue;
+
+                byte[] msg = BuildSliceMessage(outgoing, i);
+                if (msg != null && NetCommBridge.Send(Channel, msg)) resent++;
+            }
+
+            outgoing.ResendRounds++;
+            outgoing.LastActivity = DateTime.Now;
+            outgoing.Drained = false;   // 又有片进了队列, 重新等队列清空
+            Presence.VerLog("SNACK: 补传 " + resent + "/" + (outgoing.Count - CountMask(mask, outgoing.Count))
+                + " 条消息(第 " + outgoing.ResendRounds + " 轮)");
+        }
+
+        private static int CountMask(byte[] mask, int count)
+        {
+            int n = 0;
+            for (int i = 0; i < count && (i >> 3) < mask.Length; i++)
+            {
+                if ((mask[i >> 3] & (1 << (i & 7))) != 0) n++;
+            }
+            return n;
+        }
+
+        /// <summary>对方确认收齐: 这才算发送完成</summary>
+        private static void OnDone(string msgId)
+        {
+            if (outgoing == null || outgoing.MsgId != msgId) return;
+
+            outgoing.DoneConfirmed = true;
+            Presence.VerLog("收到 SDONE " + msgId);
+        }
+
+        /// <summary>对方彻底放弃了接收: 立刻止损</summary>
+        private static void OnAbort(string msgId)
+        {
+            if (outgoing == null || outgoing.MsgId != msgId) return;
+
+            ChatRoom.AddSystem("对方中断了接收, 点歌《" + outgoing.Name + "》已停止");
+            Presence.VerLog("收到 SABRT " + msgId);
+            outgoing = null;
+            SendStatus = "对方中断";
         }
 
         /// <summary>收到的一条音频分片</summary>
         public static void OnSliceMessage(string text)
         {
-            OnSlice(text.Split('|'));
+            // 限 8 段: 歌名里万一带竖线, base64 尾段也不会被切碎
+            OnSlice(text.Split(new[] { '|' }, 8));
         }
 
         private static SongOffer FindOffer(string msgId)
@@ -688,6 +920,8 @@ namespace NetChat
             accepted.Clear();
             Receiving = null;
             RecvStatus = "等待接收";
+            doneAcks.Clear();
+            slDropped = 0;
             SongPlayer.Stop();
         }
     }

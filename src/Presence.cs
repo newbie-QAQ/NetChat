@@ -198,6 +198,11 @@ namespace NetChat
             // 会话 id = 槽位序号
             string id = slot.ToString();
             Peer peer = Find(id);
+
+            // 同一个人 2 秒内重复打招呼直接忽略: 服务端偶尔会把暗号弹幕反复重同步,
+            // 不挡的话每秒几百条 HERE 涌进来(白烧 CPU 还会刷爆诊断日志)
+            if (peer != null && (DateTime.Now - peer.LastSeen).TotalSeconds < 2) return;
+
             bool isNew = peer == null;
             if (isNew)
             {

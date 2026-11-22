@@ -75,8 +75,9 @@ namespace NetChat
                 NetMessage.SendData(27, -1, -1, null, proj.whoAmI);
 
                 // 29 = 弹幕 kill(参数要传 key 而不是数组索引, 原版 Projectile.Kill 同款):
-                // 位置传 NaN, 收端直接摘除不播击碎特效
-                NetMessage.SendData(29, -1, -1, null, proj.key, float.NaN, float.NaN);
+                // 位置用真实坐标 —— 之前传 NaN 疑似被服务端(或 TShock 的校验)拒绝,
+                // 弹幕在服务端死不掉, 被反复重同步, 对端每秒收到几百条 HERE
+                NetMessage.SendData(29, -1, -1, null, proj.key, x, y);
 
                 proj.active = false;   // 本地立刻消失
 

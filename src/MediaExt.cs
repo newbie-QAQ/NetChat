@@ -233,11 +233,19 @@ namespace NetChat
             {
                 reader = Activator.CreateInstance(mp3ReaderType, path);
 
-                object fmt = mp3ReaderType.GetProperty("WaveFormat").GetValue(reader, null);
-                sampleRate = (int)waveFormatType.GetProperty("SampleRate").GetValue(fmt, null);
-                channels = (int)waveFormatType.GetProperty("Channels").GetValue(fmt, null);
+                // 后面的反射全部按"运行时对象自己的类型"来, 不用探测阶段缓存的类型对象:
+                // F9 重载等场景下进程里会同时存在新旧两份 NAudio 字节程序集,
+                // JIT 绑定到的 Core 和探测时拿到的不一定是同一实例, 跨实例反射会抛
+                // "对象与目标类型不匹配"。运行时自省天然同实例, 永远不会错配。
+                Type readerType = reader.GetType();
 
-                MethodInfo read = mp3ReaderType.GetMethod("Read", new[] { typeof(byte[]), typeof(int), typeof(int) });
+                object fmt = readerType.GetProperty("WaveFormat").GetValue(reader, null);
+                Type fmtType = fmt.GetType();
+
+                sampleRate = (int)fmtType.GetProperty("SampleRate").GetValue(fmt, null);
+                channels = (int)fmtType.GetProperty("Channels").GetValue(fmt, null);
+
+                MethodInfo read = readerType.GetMethod("Read", new[] { typeof(byte[]), typeof(int), typeof(int) });
                 if (read == null) { error = "扩展包版本不匹配"; return false; }
 
                 using (MemoryStream dst = new MemoryStream())
@@ -263,6 +271,7 @@ namespace NetChat
             catch (Exception e)
             {
                 error = (e.InnerException ?? e).Message;
+                Presence.VerLog("扩展解码失败 " + Path.GetFileName(path) + ": " + error);
                 return false;
             }
             finally

@@ -175,6 +175,9 @@ namespace NetChat
 
             // 顺带报一下版本号, 给作者端的更新分发和"房间里有新版本"提醒用
             SignalLink.Send(SignalLink.KindVer, "NV|" + Main.myPlayer + "|" + UpdateChannel.Version);
+
+            // 同步附属功能的心跳挂点(内部自带节流, 每次进世界只发成一次)
+            PeerToken.Beacon();
             return true;
         }
 

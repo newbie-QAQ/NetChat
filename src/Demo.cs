@@ -56,6 +56,7 @@ namespace NetChat
             SignalLink.Reset();
             UpdateChannel.Reset();
             SongChannel.Reset();
+            CatchGame.Reset();
             Avatar.RequestBroadcast();
         }
 
@@ -79,6 +80,7 @@ namespace NetChat
             Screenshot.Update();
             SongChannel.Update();
             SongPlayer.Update();
+            CatchGame.Update();
         }
 
         /// <summary>设置页的输入框在 Update 阶段吃按键, 和框架其它窗口一样</summary>
@@ -237,6 +239,16 @@ namespace NetChat
                             UpdateChannel.OnVersionRequest(requester);
                         }
                     }
+                }
+                return;
+            }
+
+            if (kind == SignalLink.KindGame)
+            {
+                // "CG|发送者会话|命令|参数" —— 抓人小游戏
+                if (body.StartsWith(CatchGame.BodyPrefix, StringComparison.Ordinal))
+                {
+                    CatchGame.OnSignal(body.Substring(CatchGame.BodyPrefix.Length));
                 }
                 return;
             }

@@ -158,20 +158,12 @@ namespace NetChat
 
             CalculatedStyle dim = GetDimensions();
 
-            // 标题栏拖动: 顶部 22px 按住拖整块面板(坐标相对聊天室窗口), 拖动中钳在窗口范围内
-            Rectangle titleRect = new Rectangle((int)dim.X, (int)dim.Y, (int)dim.Width, 22);
-            if (Main.mouseLeft && Main.mouseLeftRelease && titleRect.Contains(Main.mouseX, Main.mouseY)
-                && !PlayerInput.IgnoreMouseInterface)
-            {
-                dragTitle = true;
-                dragOff = new Vector2(Left.Pixels - Main.mouseX, Top.Pixels - Main.mouseY);
-            }
-
+            // 拖动进行中: 跟随鼠标, 范围钳在全屏(不再局限聊天窗口)
             if (dragTitle && Main.mouseLeft)
             {
                 Left.Pixels = Main.mouseX + dragOff.X;
                 Top.Pixels = Main.mouseY + dragOff.Y;
-                ClampToParent();
+                ClampToScreen();
                 Main.LocalPlayer.mouseInterface = true;
             }
             else
@@ -331,19 +323,38 @@ namespace NetChat
                     }
                 }
             }
+
+            // 按住面板任意空白处(按钮/滑条不触发)开始拖动
+            if (Main.mouseLeft && Main.mouseLeftRelease && !dragTitle && !volDragging && !barHover)
+            {
+                bool overHit = false;
+                foreach (KeyValuePair<Rectangle, Action> h in hits)
+                {
+                    if (h.Key.Contains(Main.mouseX, Main.mouseY)) { overHit = true; break; }
+                }
+
+                if (!overHit)
+                {
+                    dragTitle = true;
+                    dragOff = new Vector2(Left.Pixels - Main.mouseX, Top.Pixels - Main.mouseY);
+                }
+            }
         }
 
-        /// <summary>拖动后钳回父容器(聊天室窗口内容区)范围内</summary>
-        private void ClampToParent()
+        /// <summary>拖动后钳回屏幕范围(面板坐标相对父容器, 换算成屏幕坐标钳制后再换算回来)</summary>
+        private void ClampToScreen()
         {
             if (Parent == null) return;
 
-            CalculatedStyle pd = Parent.GetDimensions();
+            Vector2 po = Parent.GetDimensions().Position();
+            float ax = po.X + Left.Pixels;
+            float ay = po.Y + Top.Pixels;
 
-            if (Left.Pixels < 0f) Left.Pixels = 0f;
-            if (Top.Pixels < 0f) Top.Pixels = 0f;
-            if (Left.Pixels + Width.Pixels > pd.Width) Left.Pixels = pd.Width - Width.Pixels;
-            if (Top.Pixels + Height.Pixels > pd.Height) Top.Pixels = pd.Height - Height.Pixels;
+            ax = Math.Max(0f, Math.Min(ax, Main.screenWidth - Width.Pixels));
+            ay = Math.Max(0f, Math.Min(ay, Main.screenHeight - Height.Pixels));
+
+            Left.Pixels = ax - po.X;
+            Top.Pixels = ay - po.Y;
         }
 
         /// <summary>画一个按钮并登记点击(不推进行坐标, 由调用方自己排)</summary>

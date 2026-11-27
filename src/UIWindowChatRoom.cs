@@ -657,20 +657,12 @@ namespace NetChat
 
             CalculatedStyle dim = GetDimensions();
 
-            // 标题栏拖动: 顶部 22px 按住拖整块面板, 和点歌面板一个写法
-            Rectangle titleRect = new Rectangle((int)dim.X, (int)dim.Y, (int)dim.Width, 22);
-            if (Main.mouseLeft && Main.mouseLeftRelease && titleRect.Contains(Main.mouseX, Main.mouseY)
-                && !PlayerInput.IgnoreMouseInterface)
-            {
-                dragTitle = true;
-                dragOff = new Vector2(Left.Pixels - Main.mouseX, Top.Pixels - Main.mouseY);
-            }
-
+            // 拖动进行中: 跟随鼠标, 范围钳在全屏(不再局限聊天窗口)
             if (dragTitle && Main.mouseLeft)
             {
                 Left.Pixels = Main.mouseX + dragOff.X;
                 Top.Pixels = Main.mouseY + dragOff.Y;
-                ClampToParent();
+                ClampToScreen();
                 Main.LocalPlayer.mouseInterface = true;
             }
             else
@@ -678,7 +670,7 @@ namespace NetChat
                 dragTitle = false;
             }
 
-            ChatDraw.DrawPanel(spriteBatch, dim, "表情 (点击发送, 滚轮翻页)");
+            ChatDraw.DrawPanel(spriteBatch, dim, "表情 (点击发送, 滚轮翻页, 空白处按住可拖动)");
 
             int totalRows = (ChatEmoji.Count + Cols - 1) / Cols;
             int startRow = (int)scrollUp;
@@ -710,6 +702,13 @@ namespace NetChat
             if (hoverId >= 0)
             {
                 Main.instance.MouseText("#" + hoverId + " " + ChatEmoji.Name(hoverId), 0, 0);
+            }
+
+            // 按住空白处(表情格子不触发)开始拖动
+            if (Main.mouseLeft && Main.mouseLeftRelease && hoverId < 0)
+            {
+                dragTitle = true;
+                dragOff = new Vector2(Left.Pixels - Main.mouseX, Top.Pixels - Main.mouseY);
             }
         }
 
@@ -745,17 +744,20 @@ namespace NetChat
             Demo.SendEmote(ProfileSetting.CurrentName(), id);
         }
 
-        /// <summary>拖动后钳回父容器(聊天室窗口内容区)范围内</summary>
-        private void ClampToParent()
+        /// <summary>拖动后钳回屏幕范围(面板坐标相对父容器, 换算成屏幕坐标钳制后再换算回来)</summary>
+        private void ClampToScreen()
         {
             if (Parent == null) return;
 
-            CalculatedStyle pd = Parent.GetDimensions();
+            Vector2 po = Parent.GetDimensions().Position();
+            float ax = po.X + Left.Pixels;
+            float ay = po.Y + Top.Pixels;
 
-            if (Left.Pixels < 0f) Left.Pixels = 0f;
-            if (Top.Pixels < 0f) Top.Pixels = 0f;
-            if (Left.Pixels + Width.Pixels > pd.Width) Left.Pixels = pd.Width - Width.Pixels;
-            if (Top.Pixels + Height.Pixels > pd.Height) Top.Pixels = pd.Height - Height.Pixels;
+            ax = Math.Max(0f, Math.Min(ax, Main.screenWidth - Width.Pixels));
+            ay = Math.Max(0f, Math.Min(ay, Main.screenHeight - Height.Pixels));
+
+            Left.Pixels = ax - po.X;
+            Top.Pixels = ay - po.Y;
         }
     }
 
@@ -772,9 +774,11 @@ namespace NetChat
 
             UIEmojiPicker picker = new UIEmojiPicker();
             UIMusicPanel musicPanel = new UIMusicPanel();
+            UICatchPanel catchPanel = new UICatchPanel();
 
-            UIEmojiToggle toggle = new UIEmojiToggle(delegate { picker.Toggle(); musicPanel.Close(); });
-            UIMusicToggle musicToggle = new UIMusicToggle(delegate { musicPanel.Toggle(); picker.Close(); });
+            UIEmojiToggle toggle = new UIEmojiToggle(delegate { picker.Toggle(); musicPanel.Close(); catchPanel.Close(); });
+            UIMusicToggle musicToggle = new UIMusicToggle(delegate { musicPanel.Toggle(); picker.Close(); catchPanel.Close(); });
+            UICatchToggle catchToggle = new UICatchToggle(delegate { catchPanel.Toggle(); musicPanel.Close(); picker.Close(); });
             UICameraToggle cameraToggle = new UICameraToggle(delegate { Screenshot.Request(); });
 
             Child.Append(peers);
@@ -785,6 +789,8 @@ namespace NetChat
             Child.Append(musicToggle);
             Child.Append(musicPanel);
             Child.Append(cameraToggle);
+            Child.Append(catchToggle);
+            Child.Append(catchPanel);
 
             OnOpen += ChatRoom.MarkRead;
         }

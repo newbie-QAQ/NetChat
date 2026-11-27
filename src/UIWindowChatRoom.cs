@@ -775,10 +775,11 @@ namespace NetChat
             UIEmojiPicker picker = new UIEmojiPicker();
             UIMusicPanel musicPanel = new UIMusicPanel();
             UICatchPanel catchPanel = new UICatchPanel();
+            UIDebugPanel debugPanel = DebugBuild.Enabled ? new UIDebugPanel() : null;
 
-            UIEmojiToggle toggle = new UIEmojiToggle(delegate { picker.Toggle(); musicPanel.Close(); catchPanel.Close(); });
-            UIMusicToggle musicToggle = new UIMusicToggle(delegate { musicPanel.Toggle(); picker.Close(); catchPanel.Close(); });
-            UICatchToggle catchToggle = new UICatchToggle(delegate { catchPanel.Toggle(); musicPanel.Close(); picker.Close(); });
+            UIEmojiToggle toggle = new UIEmojiToggle(delegate { picker.Toggle(); musicPanel.Close(); catchPanel.Close(); if (debugPanel != null) debugPanel.Close(); });
+            UIMusicToggle musicToggle = new UIMusicToggle(delegate { musicPanel.Toggle(); picker.Close(); catchPanel.Close(); if (debugPanel != null) debugPanel.Close(); });
+            UICatchToggle catchToggle = new UICatchToggle(delegate { catchPanel.Toggle(); musicPanel.Close(); picker.Close(); if (debugPanel != null) debugPanel.Close(); });
             UICameraToggle cameraToggle = new UICameraToggle(delegate { Screenshot.Request(); });
 
             Child.Append(peers);
@@ -791,6 +792,15 @@ namespace NetChat
             Child.Append(cameraToggle);
             Child.Append(catchToggle);
             Child.Append(catchPanel);
+
+            // 调试面板(仅调试构建): 和其它面板互斥打开
+            if (debugPanel != null)
+            {
+                UIDebugPanel dp = debugPanel;
+                UIDebugToggle debugToggle = new UIDebugToggle(delegate { dp.Toggle(); musicPanel.Close(); picker.Close(); catchPanel.Close(); });
+                Child.Append(debugToggle);
+                Child.Append(dp);
+            }
 
             OnOpen += ChatRoom.MarkRead;
         }

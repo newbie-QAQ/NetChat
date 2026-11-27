@@ -328,7 +328,8 @@ namespace NetChat
 
         public static void PostDrawEmoteBubbles()
         {
-            if (phase != Phase.Playing || catcherSlot != Main.myPlayer) return;
+            bool active = phase == Phase.Playing && catcherSlot == Main.myPlayer;
+            if (!active && !DebugPreview) return;
 
             Player me = Main.player[Main.myPlayer];
             if (me == null || !me.active) return;
@@ -360,6 +361,7 @@ namespace NetChat
             Color black = Color.Black;
 
             // 逐横带铺黑, 身边圆形视野孔留空(带宽 12px 的阶梯近似圆, 视觉足够平滑)
+            // 源矩形 (0,0,1,1): 见 Line() 注释, MagicPixel 不是 1x1 贴图
             for (float y = -Band; y < zh + Band; y += Band)
             {
                 float dy = y + Band * 0.5f - hole.Y;
@@ -367,7 +369,7 @@ namespace NetChat
 
                 if (ad >= r)
                 {
-                    sb.Draw(px, new Vector2(-20f, y), null, black, 0f, Vector2.Zero,
+                    sb.Draw(px, new Vector2(-20f, y), new Rectangle(0, 0, 1, 1), black, 0f, Vector2.Zero,
                         new Vector2(zw + 40f, Band), SpriteEffects.None, 0f);
                 }
                 else
@@ -377,10 +379,10 @@ namespace NetChat
                     float right = hole.X + half;
 
                     if (left > -20f)
-                        sb.Draw(px, new Vector2(-20f, y), null, black, 0f, Vector2.Zero,
+                        sb.Draw(px, new Vector2(-20f, y), new Rectangle(0, 0, 1, 1), black, 0f, Vector2.Zero,
                             new Vector2(left + 20f, Band), SpriteEffects.None, 0f);
                     if (right < zw + 20f)
-                        sb.Draw(px, new Vector2(right, y), null, black, 0f, Vector2.Zero,
+                        sb.Draw(px, new Vector2(right, y), new Rectangle(0, 0, 1, 1), black, 0f, Vector2.Zero,
                             new Vector2(zw + 20f - right, Band), SpriteEffects.None, 0f);
                 }
             }
@@ -447,7 +449,9 @@ namespace NetChat
             float len = d.Length();
             if (len < 0.01f) return;
 
-            sb.Draw(px, a, null, col, (float)Math.Atan2(d.Y, d.X), Vector2.Zero,
+            // 源矩形必须取 (0,0,1,1): MagicPixel 不是 1x1 贴图, 不限源的话
+            // 缩放(长度x厚度)会把整张贴图放大 N 倍, 画出来全是粗条
+            sb.Draw(px, a, new Rectangle(0, 0, 1, 1), col, (float)Math.Atan2(d.Y, d.X), Vector2.Zero,
                 new Vector2(len, thick), SpriteEffects.None, 0f);
         }
 
@@ -457,6 +461,66 @@ namespace NetChat
             Line(sb, px, tl + new Vector2(0f, h), tl + new Vector2(w, h), thick, col);
             Line(sb, px, tl, tl + new Vector2(0f, h), thick, col);
             Line(sb, px, tl + new Vector2(w, 0f), tl + new Vector2(w, h), thick, col);
+        }
+
+        // ── 调试(仅本地调试 dll 使用: 只改本机状态, 一律不广播; DebugBuild.Enabled=false 的发布版不会暴露入口) ──
+
+        /// <summary>调试预览: 不进游戏状态也画黑幕+鼠标轮廓, 测渲染效果用</summary>
+        public static bool DebugPreview;
+
+        /// <summary>调试: 单人强开, 本机直接进入第 1 轮, 自己当抓捕者</summary>
+        public static void DebugStartSolo()
+        {
+            members.Clear();
+            members.Add(Main.myPlayer);
+            hostSlot = Main.myPlayer;
+            BeginRound(1, Main.myPlayer);
+        }
+
+        /// <summary>调试: 模拟抓到 —— 世界里离抓捕者最近的其他玩家变成新抓捕者(本地)</summary>
+        public static void DebugForceCaught()
+        {
+            if (phase != Phase.Playing) return;
+
+            Player cp = Main.player[catcherSlot];
+            int best = -1;
+            float bestD = float.MaxValue;
+
+            for (int i = 0; i < Main.player.Length; i++)
+            {
+                Player p = Main.player[i];
+                if (p == null || !p.active || p.dead || i == catcherSlot) continue;
+
+                float d = cp != null ? Vector2.Distance(cp.Center, p.Center) : 0f;
+                if (d < bestD) { bestD = d; best = i; }
+            }
+
+            if (best < 0) return;
+            if (!members.Contains(best)) members.Add(best);
+            ApplyCaught(best);
+        }
+
+        /// <summary>调试: 给自己上/摘 80 号 buff, 纯测黑暗效果(和游戏逻辑无关)</summary>
+        public static void DebugToggleBuff()
+        {
+            Player me = Main.player[Main.myPlayer];
+            if (me == null) return;
+
+            int idx = -1;
+            for (int i = 0; i < me.buffType.Length; i++)
+            {
+                if (me.buffType[i] == BlackoutBuff) { idx = i; break; }
+            }
+
+            if (idx >= 0) me.DelBuff(idx);
+            else me.AddBuff(BlackoutBuff, 60 * 60, false);
+        }
+
+        /// <summary>调试: 本机强制散局(不广播)</summary>
+        public static void DebugReset()
+        {
+            if (phase == Phase.Idle) return;
+            EndGame("调试: 本机强制重置");
         }
 
         // ── 补丁方法(ThisMod.AddPatch 注册) ──

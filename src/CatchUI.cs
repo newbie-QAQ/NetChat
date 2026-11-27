@@ -14,6 +14,9 @@ namespace NetChat
     /// <summary>聊天室左下侧的抓人游戏按钮: 点开/收起游戏面板</summary>
     internal sealed class UICatchToggle : UIElement
     {
+        /// <summary>按钮图标用的物品 id: 3123 = PDA</summary>
+        private const int IconItem = 3123;
+
         private readonly Action onClick;
 
         public UICatchToggle(Action onClick)
@@ -44,14 +47,12 @@ namespace NetChat
                 Main.instance.MouseText("抓人小游戏 (发起/加入, 抓捕者黑暗视野+轮廓提示)", 0, 0);
             }
 
-            bool glow = CatchGame.HasGame;
-            Utils.DrawBorderString(spriteBatch, "追",
-                dim.Position() + new Vector2((dim.Width - ChatText.Width("追") * 1.4f) * 0.5f, 6f),
-                glow ? new Color(255, 150, 150) : Color.White, 1.4f);
-
-            Utils.DrawBorderString(spriteBatch, "抓人",
-                dim.Position() + new Vector2((dim.Width - ChatText.Width("抓人") * 0.75f) * 0.5f, dim.Height - 24f),
-                Color.Gray, 0.75f);
+            // 纯物品图标: 3123 = PDA, 等比缩放居中; 有游戏时染红提示
+            Texture2D tex = TextureAssets.Item[IconItem].Value;
+            float scale = Math.Min(dim.Width, dim.Height) * 0.7f / Math.Max(tex.Width, tex.Height);
+            Vector2 center = dim.Position() + new Vector2(dim.Width, dim.Height) * 0.5f;
+            spriteBatch.Draw(tex, center, null, CatchGame.HasGame ? new Color(255, 150, 150) : Color.White,
+                0f, new Vector2(tex.Width, tex.Height) * 0.5f, scale, SpriteEffects.None, 0f);
         }
     }
 
